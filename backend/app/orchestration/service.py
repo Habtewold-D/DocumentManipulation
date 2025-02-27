@@ -50,6 +50,8 @@ class OrchestrationService:
         plan = state.get("plan", [])
         executed_tools = state.get("executed_tools", [])
         result_asset_id = state.get("result_asset_id") or source_asset_id
+        latest_output = executed_tools[-1].get("output", {}) if executed_tools else {}
+        preview_manifest = latest_output.get("preview_manifest") if isinstance(latest_output, dict) else None
 
         draft_version = DocumentVersion(
             document_id=document_id,
@@ -57,7 +59,7 @@ class OrchestrationService:
             state="draft",
             version_number=version_repository.next_version_number(document_id),
             pdf_asset_id=result_asset_id,
-            preview_manifest=None,
+            preview_manifest=json.dumps(preview_manifest) if preview_manifest else None,
             operation_log=json.dumps({"plan": plan, "executed_tools": executed_tools}),
         )
         saved_version = version_repository.save(draft_version)

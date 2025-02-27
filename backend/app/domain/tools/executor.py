@@ -1,4 +1,5 @@
 from typing import Any
+import hashlib
 
 import fitz
 
@@ -47,6 +48,15 @@ class ToolExecutor:
             "asset_id": upload.get("asset_id"),
             "url": upload.get("secure_url"),
         }
+
+    @staticmethod
+    def _build_preview_manifest(pdf_doc: fitz.Document) -> dict[str, Any]:
+        pages: list[dict[str, Any]] = []
+        for index, page in enumerate(pdf_doc, start=1):
+            content = page.get_text("text")
+            page_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            pages.append({"page": index, "hash": page_hash})
+        return {"pages": pages}
 
     def _replace_text(
         self,
@@ -176,6 +186,7 @@ class ToolExecutor:
             )
 
         version_asset = self._save_new_version(document_id=document_id, pdf_doc=pdf_doc)
+        preview_manifest = self._build_preview_manifest(pdf_doc)
         return ToolExecutionResult(
             {
                 "tool": tool_name,
@@ -185,6 +196,7 @@ class ToolExecutor:
                     "changes": changed,
                     "asset_id": version_asset.get("asset_id"),
                     "url": version_asset.get("url"),
+                    "preview_manifest": preview_manifest,
                 },
             }
         )
