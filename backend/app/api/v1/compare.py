@@ -1,21 +1,10 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
+from app.domain.compare import CompareResponse, CompareService
 
 router = APIRouter()
-
-
-class CompareResponse(BaseModel):
-    document_id: str
-    from_version: str
-    to_version: str
-    changed_pages: list[int]
+compare_service = CompareService()
 
 
 @router.get("/documents/{document_id}/compare", response_model=CompareResponse)
 def compare_versions(document_id: str, from_version: str, to_version: str) -> CompareResponse:
-    return CompareResponse(
-        document_id=document_id,
-        from_version=from_version,
-        to_version=to_version,
-        changed_pages=[],
-    )
+    return compare_service.compare(document_id, from_version, to_version)

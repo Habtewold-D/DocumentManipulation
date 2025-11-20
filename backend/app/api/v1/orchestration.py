@@ -1,29 +1,11 @@
-from datetime import UTC, datetime
-from uuid import uuid4
-
 from fastapi import APIRouter
-from pydantic import BaseModel
+from app.orchestration.schemas import CommandRequest, CommandResponse
+from app.orchestration.service import OrchestrationService
 
 router = APIRouter()
-
-
-class CommandRequest(BaseModel):
-    command: str
-
-
-class CommandResponse(BaseModel):
-    run_id: str
-    status: str
-    draft_version_id: str
-    created_at: datetime
+orchestration_service = OrchestrationService()
 
 
 @router.post("/documents/{document_id}/commands", response_model=CommandResponse)
 def run_command(document_id: str, payload: CommandRequest) -> CommandResponse:
-    _ = payload.command
-    return CommandResponse(
-        run_id=str(uuid4()),
-        status="draft_ready",
-        draft_version_id=str(uuid4()),
-        created_at=datetime.now(UTC),
-    )
+    return orchestration_service.run_command(document_id, payload.command)
