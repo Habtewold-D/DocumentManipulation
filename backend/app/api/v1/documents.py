@@ -1,22 +1,30 @@
-from fastapi import APIRouter, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.domain.documents.repository import DocumentRepository
 from app.domain.documents.schemas import DocumentSummary, UploadDocumentResult
 from app.domain.documents.service import DocumentService
 
 router = APIRouter()
 
-document_service = DocumentService()
-
 
 @router.post("/documents/upload", response_model=UploadDocumentResult)
-async def upload_document(file: UploadFile) -> UploadDocumentResult:
-    return document_service.upload(file.filename)
+async def upload_document(file: UploadFile, db: Session = Depends(get_db)) -> UploadDocumentResult:
+    service = DocumentService(DocumentRepository(db))
+    return service.upload(file.filename)
 
 
 @router.get("/documents", response_model=list[DocumentSummary])
-def list_documents() -> list[DocumentSummary]:
-    return document_service.list()
+def list_documents(db: Session = Depends(get_db)) -> list[DocumentSummary]:
+    service = DocumentService(DocumentRepository(db))
+    return service.list(owner_id="dev-user")
 
 
 @router.get("/documents/{document_id}", response_model=DocumentSummary)
-def get_document(document_id: str) -> DocumentSummary:
-    return document_service.get(document_id)
+def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentSummary:
+    service = DocumentService(DocumentRepository(db))
+    document = service.get(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
