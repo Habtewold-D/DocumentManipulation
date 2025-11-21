@@ -20,3 +20,12 @@ class DocumentRepository:
         self.db.add(document)
         self.db.flush()
         return document
+
+    def set_current_version(self, document_id: str, version_id: str) -> Document | None:
+        document = self.get(document_id)
+        if not document:
+            return None
+        document.current_version_id = version_id
+        self.db.add(document)
+        self.db.flush()
+        return document

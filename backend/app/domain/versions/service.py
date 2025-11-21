@@ -1,14 +1,13 @@
-from datetime import UTC, datetime
-from uuid import uuid4
-
 from app.db.models.document_version import DocumentVersion
+from app.domain.documents.repository import DocumentRepository
 from app.domain.versions.repository import VersionRepository
 from app.domain.versions.schemas import VersionItem
 
 
 class VersionService:
-    def __init__(self, repository: VersionRepository) -> None:
+    def __init__(self, repository: VersionRepository, document_repository: DocumentRepository) -> None:
         self.repository = repository
+        self.document_repository = document_repository
 
     @staticmethod
     def _to_item(version: DocumentVersion) -> VersionItem:
@@ -22,16 +21,28 @@ class VersionService:
         versions = self.repository.list_for_document(document_id)
         return [self._to_item(version) for version in versions]
 
-    def accept_draft(self, draft_id: str) -> VersionItem:
-        return VersionItem(
-            version_id=draft_id,
-            state="accepted",
-            created_at=datetime.now(UTC),
-        )
+    def accept_draft(self, document_id: str, draft_id: str) -> VersionItem:
+        draft = self.repository.get_for_document(document_id, draft_id)
+        if not draft:
+            raise ValueError("Draft not found")
+        if draft.state != "draft":
+            raise ValueError(f"Only draft versions can be accepted. Current state: {draft.state}")
 
-    def reject_draft(self, draft_id: str) -> VersionItem:
-        return VersionItem(
-            version_id=draft_id,
-            state="rejected",
-            created_at=datetime.now(UTC),
-        )
+        accepted = self.repository.update_state(draft, "accepted")
+        document = self.document_repository.set_current_version(document_id, accepted.id)
+        if not document:
+            raise ValueError("Document not found")
+
+        self.repository.db.commit()
+        return self._to_item(accepted)
+
+    def reject_draft(self, document_id: str, draft_id: str) -> VersionItem:
+        draft = self.repository.get_for_document(document_id, draft_id)
+        if not draft:
+            raise ValueError("Draft not found")
+        if draft.state != "draft":
+            raise ValueError(f"Only draft versions can be rejected. Current state: {draft.state}")
+
+        rejected = self.repository.update_state(draft, "rejected")
+        self.repository.db.commit()
+        return self._to_item(rejected)

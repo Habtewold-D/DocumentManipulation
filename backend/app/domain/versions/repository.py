@@ -25,3 +25,16 @@ class VersionRepository:
         self.db.add(version)
         self.db.flush()
         return version
+
+    def get_for_document(self, document_id: str, version_id: str) -> DocumentVersion | None:
+        stmt = select(DocumentVersion).where(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.id == version_id,
+        )
+        return self.db.scalars(stmt).first()
+
+    def update_state(self, version: DocumentVersion, new_state: str) -> DocumentVersion:
+        version.state = new_state
+        self.db.add(version)
+        self.db.flush()
+        return version
