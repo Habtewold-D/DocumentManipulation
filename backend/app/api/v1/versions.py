@@ -5,9 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.domain.documents.repository import DocumentRepository
+from app.domain.logs.repository import ToolLogRepository
+from app.domain.versions.retention import VersionRetentionService
 from app.domain.versions.repository import VersionRepository
 from app.domain.versions.schemas import VersionItem
 from app.domain.versions.service import VersionService
+from app.storage.cloudinary_client import CloudinaryClient
 
 router = APIRouter()
 
@@ -20,7 +23,8 @@ def list_versions(document_id: str, db: Session = Depends(get_db)) -> list[Versi
 
 @router.post("/documents/{document_id}/drafts/{draft_id}/accept", response_model=VersionItem)
 def accept_draft(document_id: str, draft_id: str, db: Session = Depends(get_db)) -> VersionItem:
-    service = VersionService(VersionRepository(db), DocumentRepository(db))
+    retention = VersionRetentionService(VersionRepository(db), ToolLogRepository(db), CloudinaryClient())
+    service = VersionService(VersionRepository(db), DocumentRepository(db), retention)
     try:
         return service.accept_draft(document_id, draft_id)
     except ValueError as error:
@@ -32,7 +36,8 @@ def accept_draft(document_id: str, draft_id: str, db: Session = Depends(get_db))
 
 @router.post("/documents/{document_id}/drafts/{draft_id}/reject", response_model=VersionItem)
 def reject_draft(document_id: str, draft_id: str, db: Session = Depends(get_db)) -> VersionItem:
-    service = VersionService(VersionRepository(db), DocumentRepository(db))
+    retention = VersionRetentionService(VersionRepository(db), ToolLogRepository(db), CloudinaryClient())
+    service = VersionService(VersionRepository(db), DocumentRepository(db), retention)
     try:
         return service.reject_draft(document_id, draft_id)
     except ValueError as error:

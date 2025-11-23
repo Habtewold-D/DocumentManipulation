@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db.models.tool_execution_log import ToolExecutionLog
@@ -20,3 +20,7 @@ class ToolLogRepository:
         self.db.add(log)
         self.db.flush()
         return log
+
+    def delete_for_version(self, version_id: str) -> None:
+        stmt = delete(ToolExecutionLog).where(ToolExecutionLog.version_id == version_id)
+        self.db.execute(stmt)

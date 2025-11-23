@@ -1,4 +1,6 @@
-from sqlalchemy import func, select
+from datetime import datetime
+
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.document_version import DocumentVersion
@@ -38,3 +40,29 @@ class VersionRepository:
         self.db.add(version)
         self.db.flush()
         return version
+
+    def list_by_state(self, document_id: str, state: str) -> list[DocumentVersion]:
+        stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.document_id == document_id, DocumentVersion.state == state)
+            .order_by(DocumentVersion.created_at.desc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_stale_drafts(self, older_than: datetime) -> list[DocumentVersion]:
+        stmt = (
+            select(DocumentVersion)
+            .where(DocumentVersion.state == "draft", DocumentVersion.created_at < older_than)
+            .order_by(DocumentVersion.created_at.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_accepted_older_than_keep(self, document_id: str, keep_count: int) -> list[DocumentVersion]:
+        accepted = self.list_by_state(document_id=document_id, state="accepted")
+        if len(accepted) <= keep_count:
+            return []
+        return accepted[keep_count:]
+
+    def delete_by_id(self, version_id: str) -> None:
+        stmt = delete(DocumentVersion).where(DocumentVersion.id == version_id)
+        self.db.execute(stmt)
