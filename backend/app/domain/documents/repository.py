@@ -21,6 +21,16 @@ class DocumentRepository:
         self.db.flush()
         return document
 
+    def create(self, owner_id: str, name: str, original_asset_id: str) -> Document:
+        document = Document(
+            owner_id=owner_id,
+            name=name,
+            original_asset_id=original_asset_id,
+        )
+        self.db.add(document)
+        self.db.flush()
+        return document
+
     def set_current_version(self, document_id: str, version_id: str) -> Document | None:
         document = self.get(document_id)
         if not document:
