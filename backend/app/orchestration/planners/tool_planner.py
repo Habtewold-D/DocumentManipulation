@@ -6,4 +6,32 @@ class ToolPlanner:
         self.client = GroqClient()
 
     def create_plan(self, command: str) -> dict:
-        return self.client.plan(command)
+        plan = self.client.plan(command)
+        if plan.get("plan"):
+            return plan
+
+        command_lower = command.lower()
+        if "extract" in command_lower and "text" in command_lower:
+            return {
+                "status": "fallback",
+                "plan": [
+                    {
+                        "tool": "extract_text",
+                        "args": {"scope": "all"},
+                    }
+                ],
+            }
+
+        return {
+            "status": "fallback",
+            "plan": [
+                {
+                    "tool": "replace_text",
+                    "args": {
+                        "old_text": "from",
+                        "new_text": "to",
+                        "scope": "all",
+                    },
+                }
+            ],
+        }

@@ -19,11 +19,16 @@ class OrchestrationService:
         state = self.graph.run(document_id, command)
         plan = state.get("plan", [])
         draft_version_id = state.get("draft_version_id", str(uuid4()))
+        details = {
+            "plan": plan,
+            "executed_tools": state.get("executed_tools", []),
+            "error": state.get("error"),
+        }
 
         run = CommandRun(
             document_id=document_id,
             command_text=command,
-            planned_tools=json.dumps(plan),
+            planned_tools=json.dumps(details),
             draft_version_id=draft_version_id,
             status=state.get("status", "draft_ready"),
         )
