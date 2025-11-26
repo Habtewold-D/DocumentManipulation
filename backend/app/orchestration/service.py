@@ -19,8 +19,19 @@ class OrchestrationService:
         self.planner = planner or ToolPlanner()
         self.graph = CommandGraph()
 
-    def run_command(self, document_id: str, command: str) -> CommandResponse:
+    def run_command(self, document_id: str, command: str, idempotency_key: str | None = None) -> CommandResponse:
         db = self.repository.db
+
+        if idempotency_key:
+            existing = self.repository.get_by_idempotency_key(document_id, idempotency_key)
+            if existing:
+                return CommandResponse(
+                    run_id=existing.id,
+                    status=existing.status,
+                    draft_version_id=existing.draft_version_id or "",
+                    created_at=existing.created_at,
+                )
+
         document_repository = DocumentRepository(db)
         version_repository = VersionRepository(db)
         tool_log_repository = ToolLogRepository(db)
@@ -76,6 +87,7 @@ class OrchestrationService:
         run = CommandRun(
             document_id=document_id,
             command_text=command,
+            idempotency_key=idempotency_key,
             planned_tools=json.dumps(details),
             draft_version_id=saved_version.id,
             status=state.get("status", "draft_ready"),

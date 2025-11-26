@@ -16,3 +16,10 @@ class CommandRunRepository:
         self.db.add(run)
         self.db.flush()
         return run
+
+    def get_by_idempotency_key(self, document_id: str, idempotency_key: str) -> CommandRun | None:
+        stmt = select(CommandRun).where(
+            CommandRun.document_id == document_id,
+            CommandRun.idempotency_key == idempotency_key,
+        )
+        return self.db.scalars(stmt).first()
