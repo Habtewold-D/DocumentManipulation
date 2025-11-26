@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.request import urlopen
 
 import cloudinary
 import cloudinary.uploader
@@ -38,6 +39,9 @@ class CloudinaryClient:
             "resource_type": response.get("resource_type"),
         }
 
+    def upload_version_pdf(self, file_bytes: bytes, public_id: str, folder: str = "pdf-agent/versions") -> dict[str, Any]:
+        return self.upload_pdf(file_bytes=file_bytes, public_id=public_id, folder=folder)
+
     def build_download_url(self, asset_id: str, version: str | int | None = None) -> str:
         public_id = asset_id
         options: dict[str, Any] = {"resource_type": "raw", "secure": True}
@@ -48,3 +52,8 @@ class CloudinaryClient:
 
     def delete_asset(self, asset_id: str) -> dict[str, Any]:
         return cloudinary.uploader.destroy(asset_id, resource_type="raw", invalidate=True)
+
+    def download_asset_bytes(self, asset_id: str, version: str | int | None = None) -> bytes:
+        url = self.build_download_url(asset_id=asset_id, version=version)
+        with urlopen(url) as response:
+            return response.read()

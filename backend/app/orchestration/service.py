@@ -29,16 +29,23 @@ class OrchestrationService:
         if not document:
             raise ValueError("Document not found")
 
-        state = self.graph.run(document_id, command)
+        source_asset_id = document.original_asset_id
+        if document.current_version_id:
+            current_version = version_repository.get_for_document(document_id, document.current_version_id)
+            if current_version and current_version.pdf_asset_id:
+                source_asset_id = current_version.pdf_asset_id
+
+        state = self.graph.run(document_id, command, source_asset_id=source_asset_id)
         plan = state.get("plan", [])
         executed_tools = state.get("executed_tools", [])
+        result_asset_id = state.get("result_asset_id") or source_asset_id
 
         draft_version = DocumentVersion(
             document_id=document_id,
             parent_version_id=document.current_version_id,
             state="draft",
             version_number=version_repository.next_version_number(document_id),
-            pdf_asset_id=document.original_asset_id,
+            pdf_asset_id=result_asset_id,
             preview_manifest=None,
             operation_log=json.dumps({"plan": plan, "executed_tools": executed_tools}),
         )

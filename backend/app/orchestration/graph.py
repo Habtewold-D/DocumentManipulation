@@ -16,6 +16,8 @@ class CommandState(TypedDict, total=False):
     error: str
     executed_tools: list[dict[str, Any]]
     draft_version_id: str
+    source_asset_id: str
+    result_asset_id: str
 
 
 class CommandGraph:
@@ -35,12 +37,14 @@ class CommandGraph:
 
         self._graph = workflow.compile()
 
-    def run(self, document_id: str, command: str) -> dict:
+    def run(self, document_id: str, command: str, source_asset_id: str | None = None) -> dict:
         initial_state: CommandState = {
             "document_id": document_id,
             "command": command,
             "plan": [],
             "status": "pending",
         }
+        if source_asset_id:
+            initial_state["source_asset_id"] = source_asset_id
         result = self._graph.invoke(initial_state)
         return dict(result)

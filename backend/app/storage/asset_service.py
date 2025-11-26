@@ -11,3 +11,7 @@ class AssetService:
         safe_name = filename.rsplit(".", maxsplit=1)[0].strip().replace(" ", "-") or "document"
         public_id = f"doc-{safe_name}-{uuid4()}"
         return self.cloudinary.upload_pdf(file_bytes=file_bytes, public_id=public_id, folder="pdf-agent/originals")
+
+    def upload_version_pdf(self, file_bytes: bytes, document_id: str) -> dict:
+        public_id = f"version-{document_id}-{uuid4()}"
+        return self.cloudinary.upload_version_pdf(file_bytes=file_bytes, public_id=public_id, folder="pdf-agent/versions")
