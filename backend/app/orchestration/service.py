@@ -49,6 +49,30 @@ class OrchestrationService:
         state = self.graph.run(document_id, command, source_asset_id=source_asset_id)
         plan = state.get("plan", [])
         executed_tools = state.get("executed_tools", [])
+        status = state.get("status", "draft_ready")
+
+        if status == "failed":
+            details = {
+                "plan": plan,
+                "executed_tools": executed_tools,
+                "error": state.get("error"),
+            }
+            run = CommandRun(
+                document_id=document_id,
+                command_text=command,
+                idempotency_key=idempotency_key,
+                planned_tools=json.dumps(details),
+                draft_version_id=None,
+                status=status,
+            )
+            saved_run = self.repository.save(run)
+            db.commit()
+            return CommandResponse(
+                run_id=saved_run.id,
+                status=status,
+                draft_version_id="",
+                created_at=datetime.now(UTC),
+            )
         result_asset_id = state.get("result_asset_id") or source_asset_id
         latest_output = executed_tools[-1].get("output", {}) if executed_tools else {}
         preview_manifest = latest_output.get("preview_manifest") if isinstance(latest_output, dict) else None
@@ -92,14 +116,14 @@ class OrchestrationService:
             idempotency_key=idempotency_key,
             planned_tools=json.dumps(details),
             draft_version_id=saved_version.id,
-            status=state.get("status", "draft_ready"),
+            status=status,
         )
         saved_run = self.repository.save(run)
         db.commit()
 
         return CommandResponse(
             run_id=saved_run.id,
-            status=state.get("status", "draft_ready"),
+            status=status,
             draft_version_id=saved_version.id,
             created_at=datetime.now(UTC),
         )
