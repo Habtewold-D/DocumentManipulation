@@ -12,6 +12,10 @@ class DocumentRepository:
         stmt = select(Document).where(Document.owner_id == owner_id).order_by(Document.created_at.desc())
         return list(self.db.scalars(stmt).all())
 
+    def list_all(self) -> list[Document]:
+        stmt = select(Document).order_by(Document.created_at.desc())
+        return list(self.db.scalars(stmt).all())
+
     def get(self, document_id: str) -> Document | None:
         stmt = select(Document).where(Document.id == document_id)
         return self.db.scalars(stmt).first()
