@@ -48,8 +48,8 @@ class DocumentService:
         documents = self.repository.list_by_owner(owner_id)
         return [self._to_summary(document) for document in documents]
 
-    def get(self, document_id: str) -> DocumentSummary | None:
-        document = self.repository.get(document_id)
+    def get(self, owner_id: str, document_id: str) -> DocumentSummary | None:
+        document = self.repository.get_for_owner(owner_id, document_id)
         if not document:
             return None
         return self._to_summary(document)

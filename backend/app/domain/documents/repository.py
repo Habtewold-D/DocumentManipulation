@@ -16,6 +16,10 @@ class DocumentRepository:
         stmt = select(Document).where(Document.id == document_id)
         return self.db.scalars(stmt).first()
 
+    def get_for_owner(self, owner_id: str, document_id: str) -> Document | None:
+        stmt = select(Document).where(Document.id == document_id, Document.owner_id == owner_id)
+        return self.db.scalars(stmt).first()
+
     def save(self, document: Document) -> Document:
         self.db.add(document)
         self.db.flush()

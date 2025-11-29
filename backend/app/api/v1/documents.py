@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.domain.documents.repository import DocumentRepository
 from app.domain.documents.schemas import DocumentSummary, UploadDocumentResult
@@ -12,7 +13,11 @@ router = APIRouter()
 
 
 @router.post("/documents/upload", response_model=UploadDocumentResult)
-async def upload_document(file: UploadFile, db: Session = Depends(get_db)) -> UploadDocumentResult:
+async def upload_document(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+) -> UploadDocumentResult:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
@@ -23,22 +28,29 @@ async def upload_document(file: UploadFile, db: Session = Depends(get_db)) -> Up
     try:
         cloudinary_client = CloudinaryClient()
         service = DocumentService(DocumentRepository(db), AssetService(cloudinary_client))
-        return service.upload(owner_id="dev-user", filename=file.filename, file_bytes=file_bytes)
+        return service.upload(owner_id=user_id, filename=file.filename, file_bytes=file_bytes)
     except ValueError as error:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @router.get("/documents", response_model=list[DocumentSummary])
-def list_documents(db: Session = Depends(get_db)) -> list[DocumentSummary]:
+def list_documents(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+) -> list[DocumentSummary]:
     service = DocumentService(DocumentRepository(db))
-    return service.list(owner_id="dev-user")
+    return service.list(owner_id=user_id)
 
 
 @router.get("/documents/{document_id}", response_model=DocumentSummary)
-def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentSummary:
+def get_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+) -> DocumentSummary:
     service = DocumentService(DocumentRepository(db))
-    document = service.get(document_id)
+    document = service.get(user_id, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
