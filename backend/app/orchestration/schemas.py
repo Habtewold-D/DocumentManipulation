@@ -12,3 +12,4 @@ class CommandResponse(BaseModel):
     status: str
     draft_version_id: str
     created_at: datetime
+    error: str | None = None

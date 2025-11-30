@@ -30,6 +30,7 @@ class OrchestrationService:
                     status=existing.status,
                     draft_version_id=existing.draft_version_id or "",
                     created_at=existing.created_at,
+                    error=None,
                 )
 
         document_repository = DocumentRepository(db)
@@ -72,6 +73,7 @@ class OrchestrationService:
                 status=status,
                 draft_version_id="",
                 created_at=datetime.now(UTC),
+                error=state.get("error"),
             )
         result_asset_id = state.get("result_asset_id") or source_asset_id
         latest_output = executed_tools[-1].get("output", {}) if executed_tools else {}
@@ -126,4 +128,5 @@ class OrchestrationService:
             status=status,
             draft_version_id=saved_version.id,
             created_at=datetime.now(UTC),
+            error=None,
         )
