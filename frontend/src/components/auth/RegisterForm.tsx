@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 export function RegisterForm() {
@@ -23,9 +23,10 @@ export function RegisterForm() {
   };
 
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full max-w-md border-2">
       <CardHeader>
-        <CardTitle>Create account</CardTitle>
+        <CardTitle className="text-2xl">Create account</CardTitle>
+        <CardDescription>Start your PDF workspace with versioned editing and review tools.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
@@ -53,6 +54,7 @@ export function RegisterForm() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Creating account..." : "Register"}
           </Button>
+          <p className="text-center text-xs text-muted-foreground">Already have access? Sign in after registration.</p>
         </form>
       </CardContent>
     </Card>

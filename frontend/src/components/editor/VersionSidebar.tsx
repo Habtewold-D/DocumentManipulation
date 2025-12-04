@@ -4,8 +4,8 @@ import type { VersionItem } from "@/lib/types/domain";
 
 type Props = {
   versions: VersionItem[];
-  onAccept: (id: string) => Promise<void>;
-  onReject: (id: string) => Promise<void>;
+  onAccept: (id: string) => Promise<unknown>;
+  onReject: (id: string) => Promise<unknown>;
 };
 
 export function VersionSidebar({ versions, onAccept, onReject }: Props) {

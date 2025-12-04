@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 export function LoginForm() {
@@ -22,9 +22,10 @@ export function LoginForm() {
   };
 
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full max-w-md border-2">
       <CardHeader>
-        <CardTitle>Sign in</CardTitle>
+        <CardTitle className="text-2xl">Sign in</CardTitle>
+        <CardDescription>Access your dashboard and continue your PDF workflows.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
@@ -46,6 +47,7 @@ export function LoginForm() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Signing in..." : "Sign in"}
           </Button>
+          <p className="text-center text-xs text-muted-foreground">Protected by secure JWT authentication.</p>
         </form>
       </CardContent>
     </Card>
