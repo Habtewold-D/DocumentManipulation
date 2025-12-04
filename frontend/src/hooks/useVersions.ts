@@ -1,16 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
-import { listVersions } from "@/lib/api/versions";
+import { acceptDraft, listVersions, rejectDraft } from "@/lib/api/versions";
 import type { VersionItem } from "@/lib/types/domain";
 
 export function useVersions(documentId: string) {
   const [versions, setVersions] = useState<VersionItem[]>([]);
 
-  useEffect(() => {
-    listVersions(documentId).then(setVersions);
+  const fetchVersions = useCallback(async () => {
+    if (!documentId) return [];
+    const items = await listVersions(documentId);
+    setVersions(items);
+    return items;
   }, [documentId]);
 
-  return { versions, refresh: () => listVersions(documentId).then(setVersions) };
+  const accept = useCallback(
+    async (draftId: string) => {
+      await acceptDraft(documentId, draftId);
+      return fetchVersions();
+    },
+    [documentId, fetchVersions],
+  );
+
+  const reject = useCallback(
+    async (draftId: string) => {
+      await rejectDraft(documentId, draftId);
+      return fetchVersions();
+    },
+    [documentId, fetchVersions],
+  );
+
+  return { versions, fetchVersions, accept, reject };
 }

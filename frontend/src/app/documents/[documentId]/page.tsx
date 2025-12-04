@@ -15,25 +15,31 @@ import { ComparePanel } from "@/components/editor/ComparePanel";
 
 export default function DocumentEditorPage() {
   useAuthGuard();
-  const params = useParams<{ documentId: string }>();
-  const documentId = useMemo(() => params.documentId, [params.documentId]);
+  const params = useParams<{ documentId?: string }>();
+  const documentId = useMemo(() => params.documentId ?? "", [params.documentId]);
 
   const { document } = useDocumentEditor(documentId);
   const { versions, fetchVersions, accept, reject } = useVersions(documentId);
   const { run, loading } = useCommandRun(documentId);
   const { logs, fetchLogs } = useToolLogs(documentId);
 
+  const onRunCommand = async (command: string) => {
+    await run(command);
+    await Promise.all([fetchVersions(), fetchLogs()]);
+  };
+
   useEffect(() => {
+    if (!documentId) return;
     void fetchVersions();
     void fetchLogs();
-  }, [fetchLogs, fetchVersions]);
+  }, [documentId, fetchLogs, fetchVersions]);
 
   return (
     <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-4">
       <div className="space-y-4 lg:col-span-3">
-        <h1 className="text-xl font-semibold">{document?.filename ?? "Document Editor"}</h1>
-        <CommandBox loading={loading} onRun={run} />
-        <PdfPreview url={document?.current_url} />
+        <h1 className="text-xl font-semibold">{document?.name ?? "Document Editor"}</h1>
+        <CommandBox loading={loading} onRun={onRunCommand} />
+        <PdfPreview url={document?.original_url} />
         <ComparePanel compare={null} />
         <ToolLogPanel logs={logs} />
       </div>

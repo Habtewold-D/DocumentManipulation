@@ -3,7 +3,7 @@
 import { ReactNode } from "react";
 import { Provider } from "react-redux";
 
-import { makeStore } from "@/lib/store";
+import { makeStore } from "@/state/editor-store";
 
 const store = makeStore();
 

@@ -9,7 +9,7 @@ export function useCommandRun(documentId: string) {
   const [result, setResult] = useState<CommandRunResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const execute = async (command: string) => {
+  const run = async (command: string) => {
     setLoading(true);
     try {
       const response = await runCommand(documentId, command);
@@ -20,5 +20,5 @@ export function useCommandRun(documentId: string) {
     }
   };
 
-  return { result, loading, execute };
+  return { result, loading, run };
 }

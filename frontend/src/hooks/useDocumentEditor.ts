@@ -1,15 +1,40 @@
 "use client";
 
-import { useAppDispatch, useAppSelector } from "@/hooks/useRedux";
-import { setActiveDocumentId, setSelectedVersionId } from "@/state/editor-store";
+import { useCallback, useEffect, useState } from "react";
 
-export function useDocumentEditor() {
-  const dispatch = useAppDispatch();
-  const editor = useAppSelector((state) => state.editor);
+import { getDocument } from "@/lib/api/documents";
+import type { DocumentSummary } from "@/lib/types/domain";
+import { toErrorMessage } from "@/lib/utils/errors";
+
+export function useDocumentEditor(documentId: string) {
+  const [document, setDocument] = useState<DocumentSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDocument = useCallback(async () => {
+    if (!documentId) return null;
+    setLoading(true);
+    setError(null);
+    try {
+      const item = await getDocument(documentId);
+      setDocument(item);
+      return item;
+    } catch (unknownError) {
+      setError(toErrorMessage(unknownError));
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [documentId]);
+
+  useEffect(() => {
+    void fetchDocument();
+  }, [fetchDocument]);
 
   return {
-    editor,
-    setActiveDocument: (documentId: string | null) => dispatch(setActiveDocumentId(documentId)),
-    setSelectedVersion: (versionId: string | null) => dispatch(setSelectedVersionId(versionId)),
+    document,
+    loading,
+    error,
+    fetchDocument,
   };
 }

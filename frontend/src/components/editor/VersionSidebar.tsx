@@ -13,15 +13,15 @@ export function VersionSidebar({ versions, onAccept, onReject }: Props) {
     <aside className="space-y-2 rounded border p-3">
       <p className="text-sm font-medium">Versions</p>
       {versions.map((version) => (
-        <div key={version.id} className="rounded border p-2 text-sm">
-          <p className="font-medium">{version.label ?? version.status}</p>
+        <div key={version.version_id} className="rounded border p-2 text-sm">
+          <p className="font-medium">{version.state}</p>
           <p className="text-xs text-muted-foreground">{new Date(version.created_at).toLocaleString()}</p>
-          {version.status === "draft" ? (
+          {version.state === "draft" ? (
             <div className="mt-2 flex gap-2">
-              <button className="text-xs underline" onClick={() => void onAccept(version.id)}>
+              <button className="text-xs underline" onClick={() => void onAccept(version.version_id)}>
                 Accept
               </button>
-              <button className="text-xs underline" onClick={() => void onReject(version.id)}>
+              <button className="text-xs underline" onClick={() => void onReject(version.version_id)}>
                 Reject
               </button>
             </div>

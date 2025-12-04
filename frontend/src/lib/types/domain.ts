@@ -2,6 +2,7 @@ export type DocumentSummary = {
   document_id: string;
   name: string;
   created_at: string;
+  original_url?: string;
 };
 
 export type VersionItem = {
@@ -15,4 +16,11 @@ export type ToolLogItem = {
   tool: string;
   status: string;
   created_at: string;
+};
+
+export type CompareResult = {
+  document_id: string;
+  from_version: string;
+  to_version: string;
+  changed_pages: number[];
 };

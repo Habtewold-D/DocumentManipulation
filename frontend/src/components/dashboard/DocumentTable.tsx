@@ -18,11 +18,11 @@ export function DocumentTable({ documents }: Props) {
         <div className="space-y-2">
           {documents.map((doc) => (
             <Link
-              key={doc.id}
-              href={`/documents/${doc.id}`}
+              key={doc.document_id}
+              href={`/documents/${doc.document_id}`}
               className="block rounded border p-3 hover:bg-muted/40"
             >
-              <p className="font-medium">{doc.filename}</p>
+              <p className="font-medium">{doc.name}</p>
               <p className="text-xs text-muted-foreground">Created: {new Date(doc.created_at).toLocaleString()}</p>
             </Link>
           ))}

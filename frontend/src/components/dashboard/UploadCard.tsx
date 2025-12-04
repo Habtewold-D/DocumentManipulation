@@ -6,15 +6,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-export function UploadCard() {
+type Props = {
+  onUploaded?: () => Promise<unknown>;
+};
+
+export function UploadCard({ onUploaded }: Props) {
   const { upload, loading, error } = useDocuments();
   const [file, setFile] = useState<File | null>(null);
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!file) return;
-    await upload(file);
-    setFile(null);
+    const result = await upload(file);
+    if (result) {
+      setFile(null);
+      if (onUploaded) {
+        await onUploaded();
+      }
+    }
   };
 
   return (

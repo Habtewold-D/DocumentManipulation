@@ -17,7 +17,7 @@ export default function DashboardPage() {
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <UploadCard />
+      <UploadCard onUploaded={fetchDocuments} />
       <DocumentTable documents={documents} />
     </main>
   );
