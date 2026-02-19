@@ -55,3 +55,41 @@ def test_validate_plan_normalizes_change_font_color_aliases() -> None:
     args = result["plan"][0]["args"]
     assert args["target_text"] == "Education"
     assert args["color"] == "green"
+
+
+def test_validate_plan_normalizes_change_font_size_from_alias() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "change font size of Education to 22",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {"target_text": "Education", "size": "22"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["font_size"] == 22
+
+
+def test_validate_plan_normalizes_change_font_size_from_command_text() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "change the font size of this text Education to 22",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {"target_text": "Education"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["font_size"] == 22

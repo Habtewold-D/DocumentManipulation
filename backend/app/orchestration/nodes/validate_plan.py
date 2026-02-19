@@ -1,7 +1,24 @@
+import re
+
 from app.mcp.validators import MCPValidationError, validate_tool_plan
 
 
-def _normalize_step_args(step: dict, document_id: str | None) -> None:
+def _parse_number(value: object) -> float | int | None:
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            number = float(stripped)
+            return int(number) if number.is_integer() else number
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_step_args(step: dict, document_id: str | None, command: str | None) -> None:
     args = step.setdefault("args", {})
     if not isinstance(args, dict):
         return
@@ -50,6 +67,24 @@ def _normalize_step_args(step: dict, document_id: str | None) -> None:
                 args["color"] = value
                 break
 
+    if tool_name == "change_font_size":
+        if "font_size" in args:
+            normalized_size = _parse_number(args.get("font_size"))
+            if normalized_size is not None:
+                args["font_size"] = normalized_size
+        if "font_size" not in args:
+            for alias in ("size", "new_size", "value", "fontsize", "fontSize"):
+                normalized_size = _parse_number(args.get(alias))
+                if normalized_size is not None:
+                    args["font_size"] = normalized_size
+                    break
+        if "font_size" not in args and isinstance(command, str):
+            match = re.search(r"\b(?:to|size)\s+(\d+(?:\.\d+)?)\b", command.lower())
+            if match:
+                parsed = _parse_number(match.group(1))
+                if parsed is not None:
+                    args["font_size"] = parsed
+
 
 def validate_plan(state: dict) -> dict:
     plan = state.get("plan")
@@ -59,14 +94,15 @@ def validate_plan(state: dict) -> dict:
         return state
 
     document_id = state.get("document_id")
+    command = state.get("command")
     if document_id:
         for step in plan:
             if isinstance(step, dict):
-                _normalize_step_args(step, document_id)
+                _normalize_step_args(step, document_id, command)
     else:
         for step in plan:
             if isinstance(step, dict):
-                _normalize_step_args(step, None)
+                _normalize_step_args(step, None, command)
 
     try:
         validate_tool_plan(plan)
