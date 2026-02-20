@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useParams } from "next/navigation";
 import { useAuthGuard } from "@/lib/auth/auth-guard";
-import { getAccessToken } from "@/lib/auth/token-storage";
+import { getAccessToken, subscribeAuthToken } from "@/lib/auth/token-storage";
 import { useDocumentEditor } from "@/hooks/useDocumentEditor";
 import { useVersions } from "@/hooks/useVersions";
 import { useCommandRun } from "@/hooks/useCommandRun";
@@ -31,7 +31,7 @@ export default function DocumentEditorPage() {
   const { logs, fetchLogs } = useToolLogs(documentId);
   const { compareResult, loading: compareLoading, error: compareError, runCompare } = useCompare(documentId);
   const { tools, loading: toolsLoading, error: toolsError, fetchTools } = useToolsCatalog();
-  const accessToken = getAccessToken();
+  const accessToken = useSyncExternalStore(subscribeAuthToken, getAccessToken, () => null);
 
   const onAccept = async (draftId: string) => {
     await accept(draftId);

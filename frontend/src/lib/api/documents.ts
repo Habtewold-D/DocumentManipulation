@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/api/client";
+import { apiRequest, getApiBaseUrl } from "@/lib/api/client";
 import type { DocumentSummary } from "@/lib/types/domain";
 
 export async function listDocuments() {
@@ -20,7 +20,7 @@ export async function uploadDocument(file: File) {
 }
 
 export function buildDocumentPreviewUrl(documentId: string, accessToken?: string | null) {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+  const base = getApiBaseUrl();
   const tokenQuery = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
   return `${base}/documents/${documentId}/preview${tokenQuery}`;
 }

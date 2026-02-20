@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/api/client";
+import { apiRequest, getApiBaseUrl } from "@/lib/api/client";
 import type { VersionItem } from "@/lib/types/domain";
 
 export async function listVersions(documentId: string) {
@@ -14,7 +14,7 @@ export async function rejectDraft(documentId: string, draftId: string) {
 }
 
 export function buildVersionPreviewUrl(documentId: string, versionId: string, accessToken?: string | null) {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+  const base = getApiBaseUrl();
   const tokenQuery = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
   return `${base}/documents/${documentId}/versions/${versionId}/preview${tokenQuery}`;
 }

@@ -1,6 +1,24 @@
 import { getAccessToken } from "@/lib/auth/token-storage";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+export function getApiBaseUrl() {
+  const raw = (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim();
+
+  if (!raw || raw === "/") {
+    return "http://localhost:8000/api/v1";
+  }
+
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    return raw.replace(/\/+$/, "");
+  }
+
+  if (raw.startsWith("/api/")) {
+    return raw.replace(/\/+$/, "");
+  }
+
+  return "http://localhost:8000/api/v1";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAccessToken();
@@ -12,7 +30,8 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const response = await fetch(`${API_BASE_URL}${normalizedPath}`, {
     ...init,
     headers,
   });
