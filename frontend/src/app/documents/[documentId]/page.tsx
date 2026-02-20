@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuthGuard } from "@/lib/auth/auth-guard";
 import { getAccessToken, subscribeAuthToken } from "@/lib/auth/token-storage";
@@ -32,6 +32,7 @@ export default function DocumentEditorPage() {
   const { compareResult, loading: compareLoading, error: compareError, runCompare } = useCompare(documentId);
   const { tools, loading: toolsLoading, error: toolsError, fetchTools } = useToolsCatalog();
   const accessToken = useSyncExternalStore(subscribeAuthToken, getAccessToken, () => null);
+  const [previewMode, setPreviewMode] = useState<"current" | "draft">("draft");
 
   const onAccept = async (draftId: string) => {
     await accept(draftId);
@@ -60,6 +61,11 @@ export default function DocumentEditorPage() {
     ? buildVersionPreviewUrl(documentId, compareResult.to_version, accessToken)
     : null;
   const currentPreviewUrl = documentId ? buildDocumentPreviewUrl(documentId, accessToken) : undefined;
+  const latestDraft = useMemo(() => versions.find((version) => version.state === "draft"), [versions]);
+  const draftPreviewUrl = latestDraft
+    ? buildVersionPreviewUrl(documentId, latestDraft.version_id, accessToken)
+    : undefined;
+  const activePreviewUrl = previewMode === "draft" && draftPreviewUrl ? draftPreviewUrl : currentPreviewUrl;
 
   return (
     <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-12">
@@ -70,7 +76,40 @@ export default function DocumentEditorPage() {
         </section>
         <CommandBox loading={loading} onRun={onRunCommand} />
         <CommandRunStatus result={result} requestError={runError} />
-        <PdfPreview url={currentPreviewUrl} />
+        <section className="rounded-lg border bg-card p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">Preview</p>
+              <p className="text-xs text-muted-foreground">
+                {previewMode === "draft" && latestDraft ? "Previewing latest draft" : "Previewing current version"}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  previewMode === "current" ? "bg-muted/60" : "bg-transparent"
+                }`}
+                onClick={() => setPreviewMode("current")}
+              >
+                Current
+              </button>
+              <button
+                type="button"
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  previewMode === "draft" ? "bg-muted/60" : "bg-transparent"
+                }`}
+                onClick={() => setPreviewMode("draft")}
+                disabled={!latestDraft}
+              >
+                Draft
+              </button>
+            </div>
+          </div>
+          <div className="mt-3">
+            <PdfPreview url={activePreviewUrl} />
+          </div>
+        </section>
         <ComparePanel
           compare={compareResult}
           versions={versions}
