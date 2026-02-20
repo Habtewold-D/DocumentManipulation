@@ -3,11 +3,13 @@ export type DocumentSummary = {
   name: string;
   created_at: string;
   original_url?: string;
+  current_url?: string;
 };
 
 export type VersionItem = {
   version_id: string;
   state: string;
+  pdf_url?: string;
   created_at: string;
 };
 

@@ -22,7 +22,7 @@ export default function DocumentEditorPage() {
   const params = useParams<{ documentId?: string }>();
   const documentId = useMemo(() => params.documentId ?? "", [params.documentId]);
 
-  const { document } = useDocumentEditor(documentId);
+  const { document, fetchDocument } = useDocumentEditor(documentId);
   const { versions, fetchVersions, accept, reject } = useVersions(documentId);
   const { run, loading, result, error: runError } = useCommandRun(documentId);
   const { logs, fetchLogs } = useToolLogs(documentId);
@@ -41,13 +41,18 @@ export default function DocumentEditorPage() {
 
   const onRunCommand = async (command: string) => {
     await run(command);
-    await Promise.all([fetchVersions(), fetchLogs()]);
+    await Promise.all([fetchVersions(), fetchLogs(), fetchDocument()]);
   };
 
   useEffect(() => {
     if (!documentId) return;
-    void Promise.all([fetchVersions(), fetchLogs(), fetchTools()]);
-  }, [documentId, fetchLogs, fetchTools, fetchVersions]);
+    void Promise.all([fetchVersions(), fetchLogs(), fetchTools(), fetchDocument()]);
+  }, [documentId, fetchDocument, fetchLogs, fetchTools, fetchVersions]);
+
+  const fromVersionUrl =
+    versions.find((version) => version.version_id === compareResult?.from_version)?.pdf_url ?? null;
+  const toVersionUrl =
+    versions.find((version) => version.version_id === compareResult?.to_version)?.pdf_url ?? null;
 
   return (
     <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-12">
@@ -58,7 +63,7 @@ export default function DocumentEditorPage() {
         </section>
         <CommandBox loading={loading} onRun={onRunCommand} />
         <CommandRunStatus result={result} requestError={runError} />
-        <PdfPreview url={document?.original_url} />
+        <PdfPreview url={document?.current_url ?? document?.original_url} />
         <ComparePanel
           compare={compareResult}
           versions={versions}
@@ -66,6 +71,18 @@ export default function DocumentEditorPage() {
           error={compareError}
           onCompare={runCompare}
         />
+        {compareResult ? (
+          <section className="grid gap-4 rounded-lg border bg-card p-3 md:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">From version</p>
+              <PdfPreview url={fromVersionUrl ?? undefined} />
+            </div>
+            <div>
+              <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">To version</p>
+              <PdfPreview url={toVersionUrl ?? undefined} />
+            </div>
+          </section>
+        ) : null}
         <ToolLogPanel logs={logs} />
       </div>
 

@@ -17,14 +17,29 @@ router = APIRouter()
 
 @router.get("/documents/{document_id}/versions", response_model=list[VersionItem])
 def list_versions(document_id: str, db: Session = Depends(get_db)) -> list[VersionItem]:
-    service = VersionService(VersionRepository(db), DocumentRepository(db))
+    cloudinary_client: CloudinaryClient | None
+    try:
+        cloudinary_client = CloudinaryClient()
+    except ValueError:
+        cloudinary_client = None
+
+    service = VersionService(
+        VersionRepository(db),
+        DocumentRepository(db),
+        cloudinary_client=cloudinary_client,
+    )
     return service.list_versions(document_id)
 
 
 @router.post("/documents/{document_id}/drafts/{draft_id}/accept", response_model=VersionItem)
 def accept_draft(document_id: str, draft_id: str, db: Session = Depends(get_db)) -> VersionItem:
     retention = VersionRetentionService(VersionRepository(db), ToolLogRepository(db), CloudinaryClient())
-    service = VersionService(VersionRepository(db), DocumentRepository(db), retention)
+    service = VersionService(
+        VersionRepository(db),
+        DocumentRepository(db),
+        retention,
+        cloudinary_client=CloudinaryClient(),
+    )
     try:
         return service.accept_draft(document_id, draft_id)
     except ValueError as error:
@@ -37,7 +52,12 @@ def accept_draft(document_id: str, draft_id: str, db: Session = Depends(get_db))
 @router.post("/documents/{document_id}/drafts/{draft_id}/reject", response_model=VersionItem)
 def reject_draft(document_id: str, draft_id: str, db: Session = Depends(get_db)) -> VersionItem:
     retention = VersionRetentionService(VersionRepository(db), ToolLogRepository(db), CloudinaryClient())
-    service = VersionService(VersionRepository(db), DocumentRepository(db), retention)
+    service = VersionService(
+        VersionRepository(db),
+        DocumentRepository(db),
+        retention,
+        cloudinary_client=CloudinaryClient(),
+    )
     try:
         return service.reject_draft(document_id, draft_id)
     except ValueError as error:

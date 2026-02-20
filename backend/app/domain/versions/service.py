@@ -3,6 +3,7 @@ from app.domain.documents.repository import DocumentRepository
 from app.domain.versions.retention import VersionRetentionService
 from app.domain.versions.repository import VersionRepository
 from app.domain.versions.schemas import VersionItem
+from app.storage.cloudinary_client import CloudinaryClient
 
 
 class VersionService:
@@ -11,16 +12,26 @@ class VersionService:
         repository: VersionRepository,
         document_repository: DocumentRepository,
         retention_service: VersionRetentionService | None = None,
+        cloudinary_client: CloudinaryClient | None = None,
     ) -> None:
         self.repository = repository
         self.document_repository = document_repository
         self.retention_service = retention_service
+        self.cloudinary_client = cloudinary_client
 
-    @staticmethod
-    def _to_item(version: DocumentVersion) -> VersionItem:
+    def _build_download_url(self, asset_id: str | None) -> str | None:
+        if not asset_id or self.cloudinary_client is None:
+            return None
+        try:
+            return self.cloudinary_client.build_download_url(asset_id)
+        except Exception:
+            return None
+
+    def _to_item(self, version: DocumentVersion) -> VersionItem:
         return VersionItem(
             version_id=version.id,
             state=version.state,
+            pdf_url=self._build_download_url(version.pdf_asset_id),
             created_at=version.created_at,
         )
 

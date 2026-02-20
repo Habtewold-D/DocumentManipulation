@@ -6,6 +6,7 @@ from app.db.session import get_db
 from app.domain.documents.repository import DocumentRepository
 from app.domain.documents.schemas import DocumentSummary, UploadDocumentResult
 from app.domain.documents.service import DocumentService
+from app.domain.versions.repository import VersionRepository
 from app.storage.asset_service import AssetService
 from app.storage.cloudinary_client import CloudinaryClient
 
@@ -39,7 +40,17 @@ def list_documents(
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user),
 ) -> list[DocumentSummary]:
-    service = DocumentService(DocumentRepository(db))
+    cloudinary_client: CloudinaryClient | None
+    try:
+        cloudinary_client = CloudinaryClient()
+    except ValueError:
+        cloudinary_client = None
+
+    service = DocumentService(
+        DocumentRepository(db),
+        cloudinary_client=cloudinary_client,
+        version_repository=VersionRepository(db),
+    )
     return service.list(owner_id=user_id)
 
 
@@ -49,7 +60,17 @@ def get_document(
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user),
 ) -> DocumentSummary:
-    service = DocumentService(DocumentRepository(db))
+    cloudinary_client: CloudinaryClient | None
+    try:
+        cloudinary_client = CloudinaryClient()
+    except ValueError:
+        cloudinary_client = None
+
+    service = DocumentService(
+        DocumentRepository(db),
+        cloudinary_client=cloudinary_client,
+        version_repository=VersionRepository(db),
+    )
     document = service.get(user_id, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")

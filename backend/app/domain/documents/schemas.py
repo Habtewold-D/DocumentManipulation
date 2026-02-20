@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class DocumentSummary(BaseModel):
     document_id: str
     name: str
+    original_url: str | None = None
+    current_url: str | None = None
     created_at: datetime
 
 
