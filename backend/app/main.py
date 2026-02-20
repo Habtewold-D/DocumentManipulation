@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.router import api_router
@@ -41,6 +42,13 @@ class CommandRateLimitMiddleware(BaseHTTPMiddleware):
 
 def create_app() -> FastAPI:
     application = FastAPI(title=settings.app_name)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=False,
+    )
     application.add_middleware(CommandRateLimitMiddleware)
     application.include_router(api_router, prefix="/api")
 
