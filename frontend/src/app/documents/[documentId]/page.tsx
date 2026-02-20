@@ -24,10 +24,20 @@ export default function DocumentEditorPage() {
 
   const { document } = useDocumentEditor(documentId);
   const { versions, fetchVersions, accept, reject } = useVersions(documentId);
-  const { run, loading, result } = useCommandRun(documentId);
+  const { run, loading, result, error: runError } = useCommandRun(documentId);
   const { logs, fetchLogs } = useToolLogs(documentId);
   const { compareResult, loading: compareLoading, error: compareError, runCompare } = useCompare(documentId);
   const { tools, loading: toolsLoading, error: toolsError, fetchTools } = useToolsCatalog();
+
+  const onAccept = async (draftId: string) => {
+    await accept(draftId);
+    await Promise.all([fetchVersions(), fetchLogs()]);
+  };
+
+  const onReject = async (draftId: string) => {
+    await reject(draftId);
+    await Promise.all([fetchVersions(), fetchLogs()]);
+  };
 
   const onRunCommand = async (command: string) => {
     await run(command);
@@ -47,7 +57,7 @@ export default function DocumentEditorPage() {
           <h1 className="mt-1 text-xl font-semibold">{document?.name ?? "Document Editor"}</h1>
         </section>
         <CommandBox loading={loading} onRun={onRunCommand} />
-        <CommandRunStatus result={result} />
+        <CommandRunStatus result={result} requestError={runError} />
         <PdfPreview url={document?.original_url} />
         <ComparePanel
           compare={compareResult}
@@ -60,7 +70,7 @@ export default function DocumentEditorPage() {
       </div>
 
       <div className="space-y-4 lg:col-span-4">
-        <VersionSidebar versions={versions} onAccept={accept} onReject={reject} />
+        <VersionSidebar versions={versions} onAccept={onAccept} onReject={onReject} />
         <ToolsCatalogPanel tools={tools} loading={toolsLoading} error={toolsError} />
       </div>
     </main>
