@@ -85,6 +85,29 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
                 if parsed is not None:
                     args["font_size"] = parsed
 
+    if tool_name == "add_text":
+        if "text" not in args:
+            for alias in ("new_text", "content", "value", "insert_text"):
+                value = args.get(alias)
+                if isinstance(value, str) and value.strip():
+                    args["text"] = value
+                    break
+
+        if "reference_text" not in args:
+            for alias in ("anchor_text", "relative_to", "target_text", "below_text", "next_to_text"):
+                value = args.get(alias)
+                if isinstance(value, str) and value.strip():
+                    args["reference_text"] = value
+                    break
+
+        if "position" not in args:
+            placement = args.get("placement")
+            if isinstance(placement, str) and placement.strip():
+                args["position"] = placement
+
+        if isinstance(command, str) and command.strip() and "command" not in args:
+            args["command"] = command
+
 
 def validate_plan(state: dict) -> dict:
     plan = state.get("plan")

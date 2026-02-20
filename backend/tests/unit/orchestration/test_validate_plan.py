@@ -93,3 +93,54 @@ def test_validate_plan_normalizes_change_font_size_from_command_text() -> None:
     assert result["status"] == "validated"
     args = result["plan"][0]["args"]
     assert args["font_size"] == 22
+
+
+def test_validate_plan_normalizes_add_text_aliases() -> None:
+    state = {
+        "document_id": "doc-1",
+        "plan": [
+            {
+                "tool": "add_text",
+                "args": {
+                    "content": "This is a new sentence.",
+                    "target_text": "Education",
+                    "placement": "below",
+                    "page_number": 1,
+                    "x": 72,
+                    "y": 72,
+                },
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["text"] == "This is a new sentence."
+    assert args["reference_text"] == "Education"
+    assert args["position"] == "below"
+
+
+def test_validate_plan_add_text_includes_command_text() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": 'add this text at the end of the second page "hello"',
+        "plan": [
+            {
+                "tool": "add_text",
+                "args": {
+                    "text": "hello",
+                    "page_number": 2,
+                    "x": 72,
+                    "y": 72,
+                },
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["command"] == 'add this text at the end of the second page "hello"'
