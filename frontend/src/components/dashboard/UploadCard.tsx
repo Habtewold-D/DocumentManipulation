@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useDocuments } from "@/hooks/useDocuments";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 type Props = {
@@ -27,24 +26,17 @@ export function UploadCard({ onUploaded }: Props) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Upload PDF</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form className="space-y-3" onSubmit={onSubmit}>
-          <Input
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            required
-          />
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <Button disabled={loading || !file} type="submit">
-            {loading ? "Uploading..." : "Upload"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+    <form className="space-y-3" onSubmit={onSubmit}>
+      <Input
+        type="file"
+        accept="application/pdf"
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        required
+      />
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <Button disabled={loading || !file} type="submit">
+        {loading ? "Uploading..." : "Upload"}
+      </Button>
+    </form>
   );
 }
