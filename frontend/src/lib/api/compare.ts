@@ -8,6 +8,6 @@ export type CompareResponse = {
 };
 
 export async function compareVersions(documentId: string, fromVersion: string, toVersion: string) {
-  const params = new URLSearchParams({ from: fromVersion, to: toVersion });
+  const params = new URLSearchParams({ from_version: fromVersion, to_version: toVersion });
   return apiRequest<CompareResponse>(`/documents/${documentId}/compare?${params.toString()}`);
 }

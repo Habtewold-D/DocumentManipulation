@@ -1,12 +1,10 @@
 import { apiRequest } from "@/lib/api/client";
 
-export type ToolCatalogItem = {
-  name: string;
-  title: string;
-  description: string;
-  input_schema: Record<string, unknown>;
+type ToolsResponse = {
+  tools: string[];
 };
 
 export async function listTools() {
-  return apiRequest<ToolCatalogItem[]>("/tools");
+  const response = await apiRequest<ToolsResponse>("/tools");
+  return response.tools;
 }

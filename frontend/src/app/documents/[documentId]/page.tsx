@@ -7,11 +7,15 @@ import { useDocumentEditor } from "@/hooks/useDocumentEditor";
 import { useVersions } from "@/hooks/useVersions";
 import { useCommandRun } from "@/hooks/useCommandRun";
 import { useToolLogs } from "@/hooks/useToolLogs";
+import { useCompare } from "@/hooks/useCompare";
+import { useToolsCatalog } from "@/hooks/useToolsCatalog";
 import { CommandBox } from "@/components/editor/CommandBox";
 import { PdfPreview } from "@/components/editor/PdfPreview";
 import { VersionSidebar } from "@/components/editor/VersionSidebar";
 import { ToolLogPanel } from "@/components/editor/ToolLogPanel";
 import { ComparePanel } from "@/components/editor/ComparePanel";
+import { CommandRunStatus } from "@/components/editor/CommandRunStatus";
+import { ToolsCatalogPanel } from "@/components/editor/ToolsCatalogPanel";
 
 export default function DocumentEditorPage() {
   useAuthGuard();
@@ -20,8 +24,10 @@ export default function DocumentEditorPage() {
 
   const { document } = useDocumentEditor(documentId);
   const { versions, fetchVersions, accept, reject } = useVersions(documentId);
-  const { run, loading } = useCommandRun(documentId);
+  const { run, loading, result } = useCommandRun(documentId);
   const { logs, fetchLogs } = useToolLogs(documentId);
+  const { compareResult, loading: compareLoading, error: compareError, runCompare } = useCompare(documentId);
+  const { tools, loading: toolsLoading, error: toolsError, fetchTools } = useToolsCatalog();
 
   const onRunCommand = async (command: string) => {
     await run(command);
@@ -30,20 +36,33 @@ export default function DocumentEditorPage() {
 
   useEffect(() => {
     if (!documentId) return;
-    void fetchVersions();
-    void fetchLogs();
-  }, [documentId, fetchLogs, fetchVersions]);
+    void Promise.all([fetchVersions(), fetchLogs(), fetchTools()]);
+  }, [documentId, fetchLogs, fetchTools, fetchVersions]);
 
   return (
-    <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-4">
-      <div className="space-y-4 lg:col-span-3">
-        <h1 className="text-xl font-semibold">{document?.name ?? "Document Editor"}</h1>
+    <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-12">
+      <div className="space-y-4 lg:col-span-8">
+        <section className="rounded-lg border bg-card p-4">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Document Workspace</p>
+          <h1 className="mt-1 text-xl font-semibold">{document?.name ?? "Document Editor"}</h1>
+        </section>
         <CommandBox loading={loading} onRun={onRunCommand} />
+        <CommandRunStatus result={result} />
         <PdfPreview url={document?.original_url} />
-        <ComparePanel compare={null} />
+        <ComparePanel
+          compare={compareResult}
+          versions={versions}
+          loading={compareLoading}
+          error={compareError}
+          onCompare={runCompare}
+        />
         <ToolLogPanel logs={logs} />
       </div>
-      <VersionSidebar versions={versions} onAccept={accept} onReject={reject} />
+
+      <div className="space-y-4 lg:col-span-4">
+        <VersionSidebar versions={versions} onAccept={accept} onReject={reject} />
+        <ToolsCatalogPanel tools={tools} loading={toolsLoading} error={toolsError} />
+      </div>
     </main>
   );
 }
