@@ -1,15 +1,20 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import { clearAccessToken, getAccessToken } from "@/lib/auth/token-storage";
+import { clearAccessToken, getAccessToken, subscribeAuthToken } from "@/lib/auth/token-storage";
 
 export function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
-  const isAuthenticated = Boolean(getAccessToken());
+  const isAuthenticated = useSyncExternalStore(
+    subscribeAuthToken,
+    () => Boolean(getAccessToken()),
+    () => false,
+  );
 
   const hideHeader = pathname?.startsWith("/auth/");
   if (hideHeader) return null;

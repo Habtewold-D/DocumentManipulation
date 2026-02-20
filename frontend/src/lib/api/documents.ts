@@ -18,3 +18,9 @@ export async function uploadDocument(file: File) {
     body: formData,
   });
 }
+
+export function buildDocumentPreviewUrl(documentId: string, accessToken?: string | null) {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+  const tokenQuery = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
+  return `${base}/documents/${documentId}/preview${tokenQuery}`;
+}

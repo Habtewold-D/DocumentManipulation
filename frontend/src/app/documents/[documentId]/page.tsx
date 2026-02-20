@@ -3,12 +3,15 @@
 import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { useAuthGuard } from "@/lib/auth/auth-guard";
+import { getAccessToken } from "@/lib/auth/token-storage";
 import { useDocumentEditor } from "@/hooks/useDocumentEditor";
 import { useVersions } from "@/hooks/useVersions";
 import { useCommandRun } from "@/hooks/useCommandRun";
 import { useToolLogs } from "@/hooks/useToolLogs";
 import { useCompare } from "@/hooks/useCompare";
 import { useToolsCatalog } from "@/hooks/useToolsCatalog";
+import { buildDocumentPreviewUrl } from "@/lib/api/documents";
+import { buildVersionPreviewUrl } from "@/lib/api/versions";
 import { CommandBox } from "@/components/editor/CommandBox";
 import { PdfPreview } from "@/components/editor/PdfPreview";
 import { VersionSidebar } from "@/components/editor/VersionSidebar";
@@ -28,6 +31,7 @@ export default function DocumentEditorPage() {
   const { logs, fetchLogs } = useToolLogs(documentId);
   const { compareResult, loading: compareLoading, error: compareError, runCompare } = useCompare(documentId);
   const { tools, loading: toolsLoading, error: toolsError, fetchTools } = useToolsCatalog();
+  const accessToken = getAccessToken();
 
   const onAccept = async (draftId: string) => {
     await accept(draftId);
@@ -49,10 +53,13 @@ export default function DocumentEditorPage() {
     void Promise.all([fetchVersions(), fetchLogs(), fetchTools(), fetchDocument()]);
   }, [documentId, fetchDocument, fetchLogs, fetchTools, fetchVersions]);
 
-  const fromVersionUrl =
-    versions.find((version) => version.version_id === compareResult?.from_version)?.pdf_url ?? null;
-  const toVersionUrl =
-    versions.find((version) => version.version_id === compareResult?.to_version)?.pdf_url ?? null;
+  const fromVersionUrl = compareResult?.from_version
+    ? buildVersionPreviewUrl(documentId, compareResult.from_version, accessToken)
+    : null;
+  const toVersionUrl = compareResult?.to_version
+    ? buildVersionPreviewUrl(documentId, compareResult.to_version, accessToken)
+    : null;
+  const currentPreviewUrl = documentId ? buildDocumentPreviewUrl(documentId, accessToken) : undefined;
 
   return (
     <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-12">
@@ -63,7 +70,7 @@ export default function DocumentEditorPage() {
         </section>
         <CommandBox loading={loading} onRun={onRunCommand} />
         <CommandRunStatus result={result} requestError={runError} />
-        <PdfPreview url={document?.current_url ?? document?.original_url} />
+        <PdfPreview url={currentPreviewUrl} />
         <ComparePanel
           compare={compareResult}
           versions={versions}

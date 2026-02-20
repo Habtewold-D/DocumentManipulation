@@ -1,16 +1,40 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.auth.security import TokenError, decode_access_token
 from app.db.session import get_db
 from app.domain.documents.repository import DocumentRepository
 from app.domain.documents.schemas import DocumentSummary, UploadDocumentResult
 from app.domain.documents.service import DocumentService
+from app.domain.users.repository import UserRepository
 from app.domain.versions.repository import VersionRepository
 from app.storage.asset_service import AssetService
 from app.storage.cloudinary_client import CloudinaryClient
 
 router = APIRouter()
+
+
+def _resolve_user_id(
+    db: Session,
+    authorization: str | None,
+    access_token: str | None,
+) -> str:
+    token = access_token
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", maxsplit=1)[1]
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    try:
+        user_id = decode_access_token(token)
+    except TokenError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+    user = UserRepository(db).get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user.id
 
 
 @router.post("/documents/upload", response_model=UploadDocumentResult)
@@ -75,3 +99,38 @@ def get_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+
+@router.get("/documents/{document_id}/preview")
+def preview_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    access_token: str | None = Query(default=None),
+) -> Response:
+    user_id = _resolve_user_id(db, authorization, access_token)
+
+    document = DocumentRepository(db).get_for_owner(user_id, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    preview_asset_id = document.original_asset_id
+    if document.current_version_id:
+        current_version = VersionRepository(db).get_for_document(document.id, document.current_version_id)
+        if current_version and current_version.pdf_asset_id:
+            preview_asset_id = current_version.pdf_asset_id
+
+    if not preview_asset_id:
+        raise HTTPException(status_code=404, detail="Preview asset not found")
+
+    cloudinary_client = CloudinaryClient()
+    try:
+        pdf_bytes = cloudinary_client.download_asset_bytes(preview_asset_id)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Failed to download preview: {error}") from error
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=preview.pdf"},
+    )
