@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import { useParams } from "next/navigation";
+import { FileText, Eye } from "lucide-react";
 import { useAuthGuard } from "@/lib/auth/auth-guard";
 import { getAccessToken, subscribeAuthToken } from "@/lib/auth/token-storage";
 import { useDocumentEditor } from "@/hooks/useDocumentEditor";
@@ -68,37 +69,55 @@ export default function DocumentEditorPage() {
   const activePreviewUrl = previewMode === "draft" && draftPreviewUrl ? draftPreviewUrl : currentPreviewUrl;
 
   return (
-    <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-12">
+    <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-12 animate-fade-in">
       <div className="space-y-4 lg:col-span-8">
-        <section className="rounded-lg border bg-card p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Document Workspace</p>
-          <h1 className="mt-1 text-xl font-semibold">{document?.name ?? "Document Editor"}</h1>
+        {/* Document title */}
+        <section className="rounded-xl overflow-hidden gradient-primary p-5 text-white shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/20 backdrop-blur-sm">
+              <FileText className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-white/70">Document Workspace</p>
+              <h1 className="text-xl font-semibold">{document?.name ?? "Document Editor"}</h1>
+            </div>
+          </div>
         </section>
+
         <CommandBox loading={loading} onRun={onRunCommand} />
         <CommandRunStatus result={result} requestError={runError} />
-        <section className="rounded-lg border bg-card p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-medium">Preview</p>
-              <p className="text-xs text-muted-foreground">
-                {previewMode === "draft" && latestDraft ? "Previewing latest draft" : "Previewing current version"}
-              </p>
-            </div>
+
+        {/* Preview section with toggle */}
+        <section className="rounded-xl border border-primary/10 gradient-card p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Eye className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">Preview</p>
+                <p className="text-xs text-muted-foreground">
+                  {previewMode === "draft" && latestDraft ? "Previewing latest draft" : "Previewing current version"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 rounded-full border border-primary/15 bg-muted/50 p-0.5">
               <button
                 type="button"
-                className={`rounded-full border px-3 py-1 text-xs ${
-                  previewMode === "current" ? "bg-muted/60" : "bg-transparent"
-                }`}
+                className={`rounded-full px-3.5 py-1 text-xs font-medium transition-all ${previewMode === "current"
+                    ? "gradient-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                  }`}
                 onClick={() => setPreviewMode("current")}
               >
                 Current
               </button>
               <button
                 type="button"
-                className={`rounded-full border px-3 py-1 text-xs ${
-                  previewMode === "draft" ? "bg-muted/60" : "bg-transparent"
-                }`}
+                className={`rounded-full px-3.5 py-1 text-xs font-medium transition-all ${previewMode === "draft"
+                    ? "gradient-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                  }`}
                 onClick={() => setPreviewMode("draft")}
                 disabled={!latestDraft}
               >
@@ -106,10 +125,9 @@ export default function DocumentEditorPage() {
               </button>
             </div>
           </div>
-          <div className="mt-3">
-            <PdfPreview url={activePreviewUrl} />
-          </div>
+          <PdfPreview url={activePreviewUrl} />
         </section>
+
         <ComparePanel
           compare={compareResult}
           versions={versions}
@@ -117,8 +135,9 @@ export default function DocumentEditorPage() {
           error={compareError}
           onCompare={runCompare}
         />
+
         {compareResult ? (
-          <section className="grid gap-4 rounded-lg border bg-card p-3 md:grid-cols-2">
+          <section className="grid gap-4 rounded-xl border border-primary/10 gradient-card p-4 shadow-sm md:grid-cols-2">
             <div>
               <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">From version</p>
               <PdfPreview url={fromVersionUrl ?? undefined} />
@@ -129,6 +148,7 @@ export default function DocumentEditorPage() {
             </div>
           </section>
         ) : null}
+
         <ToolLogPanel logs={logs} />
       </div>
 

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
+import { Geist_Mono } from "next/font/google";
 import { AppHeader } from "@/components/app/AppHeader";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const geistSans = Geist({
+const inter = Inter({
   variable: "--font-geist-sans",
   subsets: ["latin"],
 });
@@ -15,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PDF Agent",
-  description: "AI-powered PDF editing, versioning, and comparison workspace",
+  title: "PDF Agent — AI-Powered Document Workspace",
+  description: "Upload, edit, version, and compare PDFs using natural-language commands backed by MCP tools.",
 };
 
 export default function RootLayout({
@@ -27,11 +28,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <Providers>
           <AppHeader />
-          {children}
+          <div className="min-h-[calc(100vh-3.5rem)]">
+            {children}
+          </div>
         </Providers>
       </body>
     </html>
