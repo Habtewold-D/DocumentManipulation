@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FileText, LayoutDashboard, LogOut, UserPlus } from "lucide-react";
+import { FileText, LogOut, UserPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { clearAccessToken, getAccessToken, subscribeAuthToken } from "@/lib/auth/token-storage";
@@ -41,12 +41,6 @@ export function AppHeader() {
         <nav className="flex items-center gap-1.5">
           {isAuthenticated ? (
             <>
-              <Button asChild variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground">
-                <Link href="/dashboard">
-                  <LayoutDashboard className="h-4 w-4" />
-                  Dashboard
-                </Link>
-              </Button>
               <Button variant="outline" size="sm" className="gap-1.5" onClick={onSignOut}>
                 <LogOut className="h-4 w-4" />
                 Sign out
