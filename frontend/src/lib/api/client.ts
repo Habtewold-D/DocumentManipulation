@@ -1,32 +1,17 @@
 import { getAccessToken } from "@/lib/auth/token-storage";
 
-function getDefaultApiBaseUrl() {
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname || "localhost";
-    return `http://${host}:8000/api/v1`;
-  }
-  return "http://localhost:8000/api/v1";
-}
+const API_VERSION_SEGMENT = "/v1";
 
 export function getApiBaseUrl() {
   const raw = (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim();
 
   if (!raw || raw === "/") {
-    return getDefaultApiBaseUrl();
+    throw new Error("NEXT_PUBLIC_API_BASE_URL is required (expected format: <backend-origin>/api)");
   }
 
-  if (raw.startsWith("http://") || raw.startsWith("https://")) {
-    return raw.replace(/\/+$/, "");
-  }
-
-  if (raw.startsWith("/api/")) {
-    if (typeof window !== "undefined") {
-      return `${window.location.origin}${raw}`.replace(/\/+$/, "");
-    }
-    return raw.replace(/\/+$/, "");
-  }
-
-  return getDefaultApiBaseUrl();
+  const normalized = raw.replace(/\/+$/, "");
+  const withoutVersion = normalized.replace(/\/v1$/i, "");
+  return `${withoutVersion}${API_VERSION_SEGMENT}`;
 }
 
 const API_BASE_URL = getApiBaseUrl();
@@ -51,17 +36,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     headers,
   };
 
-  let response: Response;
-  try {
-    response = await fetch(buildUrl(API_BASE_URL, path), requestInit);
-  } catch (error) {
-    if (typeof window !== "undefined") {
-      const retryBase = `http://${window.location.hostname}:8000/api/v1`;
-      response = await fetch(buildUrl(retryBase, path), requestInit);
-    } else {
-      throw error;
-    }
-  }
+  const response = await fetch(buildUrl(API_BASE_URL, path), requestInit);
 
   if (!response.ok) {
     const text = await response.text();
