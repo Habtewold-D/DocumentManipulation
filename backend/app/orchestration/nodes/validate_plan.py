@@ -85,6 +85,24 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
                 if parsed is not None:
                     args["font_size"] = parsed
 
+        if "reference_text" not in args:
+            for alias in ("reference", "reference_word", "same_as", "match_text", "relative_to"):
+                value = args.get(alias)
+                if isinstance(value, str) and value.strip():
+                    args["reference_text"] = value
+                    break
+
+        if "reference_text" not in args and isinstance(command, str):
+            reference_match = re.search(
+                r"same\s+as\s+(?:word\s+)?[\"']?([^\"'.,\n]+)[\"']?",
+                command,
+                flags=re.IGNORECASE,
+            )
+            if reference_match:
+                extracted = reference_match.group(1).strip()
+                if extracted:
+                    args["reference_text"] = extracted
+
     if tool_name == "add_text":
         if "text" not in args:
             for alias in ("new_text", "content", "value", "insert_text"):
@@ -104,6 +122,28 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
             placement = args.get("placement")
             if isinstance(placement, str) and placement.strip():
                 args["position"] = placement
+
+        if "position" not in args and isinstance(command, str):
+            lowered = command.lower()
+            if any(token in lowered for token in ("next to", "beside", "same line", "on same line", "inline")):
+                args["position"] = "next"
+            elif any(token in lowered for token in ("below", "under")):
+                args["position"] = "below"
+            elif "above" in lowered:
+                args["position"] = "above"
+
+        if "reference_text" not in args and isinstance(command, str):
+            patterns = [
+                r"(?:next\s+to|beside|same\s+line\s+(?:with|as)|on\s+same\s+line\s+with|below|under|above)\s+[\"']?([^\"'\n,.]+)[\"']?",
+                r"(?:with\s+text|with\s+word|to\s+text|to\s+word)\s+[\"']?([^\"'\n,.]+)[\"']?",
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, command, flags=re.IGNORECASE)
+                if match:
+                    extracted = match.group(1).strip()
+                    if extracted:
+                        args["reference_text"] = extracted
+                        break
 
         if isinstance(command, str) and command.strip() and "command" not in args:
             args["command"] = command

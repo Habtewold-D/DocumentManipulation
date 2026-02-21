@@ -54,7 +54,12 @@ TOOL_REGISTRY: dict[str, ToolSchema] = {
     ),
     "change_font_size": ToolSchema(
         name="change_font_size",
-        input_schema={"document_id": "string", "target_text": "string", "font_size": "number"},
+        input_schema={
+            "document_id": "string",
+            "target_text": "string",
+            "font_size": "number?",
+            "reference_text": "string?",
+        },
         output_schema={"success": "boolean", "version_id": "string"},
     ),
     "change_font_color": ToolSchema(

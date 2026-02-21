@@ -66,6 +66,7 @@ class ToolExecutor:
         fontsize: float = 11,
         fontname: str = "helv",
         color: tuple[float, float, float] = (0, 0, 0),
+        preserve_line_baseline: bool = False,
     ) -> int:
         replacements = 0
         for page in pdf_doc:
@@ -75,7 +76,8 @@ class ToolExecutor:
             if rects:
                 page.apply_redactions()
             for rect in rects:
-                start_point = fitz.Point(rect.x0, max(36, rect.y0 + fontsize))
+                baseline_y = rect.y1 - 1 if preserve_line_baseline else max(36, rect.y0 + fontsize)
+                start_point = fitz.Point(rect.x0, baseline_y)
                 overflow = self._insert_wrapped_text(
                     pdf_doc=pdf_doc,
                     start_page=page,
@@ -84,6 +86,7 @@ class ToolExecutor:
                     fontsize=fontsize,
                     fontname=fontname,
                     color=color,
+                    respect_start_y=preserve_line_baseline,
                 )
                 if overflow:
                     self._append_text_to_new_pages(
@@ -128,13 +131,14 @@ class ToolExecutor:
         fontname: str,
         color: tuple[float, float, float],
         avoid_overlay: bool = False,
+        respect_start_y: bool = False,
     ) -> str:
         margin = 36.0
         page = start_page
         page_index = page.number
         line_height = self._line_height(fontsize)
 
-        y = max(start_point.y, margin + line_height)
+        y = start_point.y if respect_start_y else max(start_point.y, margin + line_height)
         max_width = max(80.0, page.rect.width - margin - start_point.x)
         lines = self._wrap_text_to_width(text, fontname=fontname, fontsize=fontsize, max_width=max_width)
 
@@ -198,6 +202,33 @@ class ToolExecutor:
                 break
 
         return " ".join(remaining_lines).strip()
+
+    @staticmethod
+    def _infer_font_size_from_reference(pdf_doc: fitz.Document, reference_text: str) -> float | None:
+        token = reference_text.strip()
+        if not token:
+            return None
+
+        lower_token = token.lower()
+        for page in pdf_doc:
+            text_dict = page.get_text("dict")
+            for block in text_dict.get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        span_text = str(span.get("text", ""))
+                        if lower_token in span_text.lower():
+                            size = span.get("size")
+                            if isinstance(size, (int, float)):
+                                return float(size)
+
+        for page in pdf_doc:
+            rects = page.search_for(token)
+            if rects:
+                estimated = rects[0].height * 0.9
+                if estimated > 0:
+                    return float(estimated)
+
+        return None
 
     def _append_text_to_new_pages(
         self,
@@ -334,6 +365,48 @@ class ToolExecutor:
 
         return None
 
+    @staticmethod
+    def _find_anchor_line(
+        pdf_doc: fitz.Document,
+        anchor_text: str,
+        preferred_page_number: int | None = None,
+    ) -> tuple[fitz.Page, fitz.Rect, float] | None:
+        token = anchor_text.strip().lower()
+        if not token:
+            return None
+
+        pages_to_scan: list[fitz.Page] = []
+        if preferred_page_number and 1 <= preferred_page_number <= len(pdf_doc):
+            pages_to_scan.append(pdf_doc[preferred_page_number - 1])
+        pages_to_scan.extend(page for page in pdf_doc if page not in pages_to_scan)
+
+        for page in pages_to_scan:
+            text_dict = page.get_text("dict")
+            for block in text_dict.get("blocks", []):
+                for line in block.get("lines", []):
+                    spans = line.get("spans", [])
+                    if not spans:
+                        continue
+
+                    line_text = " ".join(str(span.get("text", "")) for span in spans).strip().lower()
+                    if token not in line_text:
+                        continue
+
+                    bbox = line.get("bbox")
+                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                        continue
+
+                    line_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+                    span_bottoms = []
+                    for span in spans:
+                        span_bbox = span.get("bbox")
+                        if isinstance(span_bbox, (list, tuple)) and len(span_bbox) == 4:
+                            span_bottoms.append(float(span_bbox[3]))
+                    baseline_y = (max(span_bottoms) - 1.0) if span_bottoms else (line_rect.y1 - 1.0)
+                    return (page, line_rect, baseline_y)
+
+        return None
+
     def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
         document_id = str(args.get("document_id", ""))
         source_asset_id = str(args.get("source_asset_id", ""))
@@ -418,33 +491,120 @@ class ToolExecutor:
                 anchor = self._find_anchor_rect(pdf_doc, anchor_text=anchor_text, preferred_page_number=page_number or None)
                 if anchor:
                     page, rect = anchor
-                    if "next" in position or "right" in position or "beside" in position:
-                        raw_point = fitz.Point(rect.x1 + 8, rect.y1)
-                    elif "above" in position:
-                        raw_point = fitz.Point(rect.x0, rect.y0 - 4)
-                    else:
-                        raw_point = fitz.Point(rect.x0, rect.y1 + self._line_height(fontsize))
-
-                    start_point = self._clamp_start_point(page, raw_point, fontsize)
-                    overflow = self._insert_wrapped_text(
-                        pdf_doc=pdf_doc,
-                        start_page=page,
-                        start_point=start_point,
-                        text=text,
-                        fontsize=fontsize,
-                        fontname="helv",
-                        color=color,
-                        avoid_overlay=True,
+                    inline_requested = any(
+                        key in f"{position} {command}"
+                        for key in ("next", "right", "beside", "same line", "inline", "on same line")
                     )
-                    if overflow:
-                        self._append_text_to_new_pages(
+
+                    if inline_requested:
+                        line_anchor = self._find_anchor_line(
+                            pdf_doc,
+                            anchor_text=anchor_text,
+                            preferred_page_number=page_number or None,
+                        )
+                        if line_anchor:
+                            page, line_rect, baseline_y = line_anchor
+                            raw_x = line_rect.x1 + 8
+                            raw_y = baseline_y
+                        else:
+                            raw_x = rect.x1 + 8
+                            raw_y = rect.y1 - 1
+
+                        right_limit = page.rect.width - 36 - 80
+                        if raw_x > right_limit:
+                            raw_point = fitz.Point(36, raw_y + self._line_height(fontsize))
+                        else:
+                            raw_point = fitz.Point(raw_x, raw_y)
+                        start_point = fitz.Point(
+                            min(max(raw_point.x, 36), max(36.0, page.rect.width - 36 - 80)),
+                            min(max(raw_point.y, 36), page.rect.height - 36),
+                        )
+                        overflow = self._insert_wrapped_text(
                             pdf_doc=pdf_doc,
-                            text=overflow,
+                            start_page=page,
+                            start_point=start_point,
+                            text=text,
                             fontsize=fontsize,
                             fontname="helv",
                             color=color,
+                            avoid_overlay=False,
+                            respect_start_y=True,
                         )
-                    inserted = True
+                        if overflow:
+                            self._append_text_to_new_pages(
+                                pdf_doc=pdf_doc,
+                                text=overflow,
+                                fontsize=fontsize,
+                                fontname="helv",
+                                color=color,
+                            )
+                        inserted = True
+                    elif "next" in position or "right" in position or "beside" in position:
+                        raw_point = fitz.Point(rect.x1 + 8, rect.y1)
+                        start_point = self._clamp_start_point(page, raw_point, fontsize)
+                        overflow = self._insert_wrapped_text(
+                            pdf_doc=pdf_doc,
+                            start_page=page,
+                            start_point=start_point,
+                            text=text,
+                            fontsize=fontsize,
+                            fontname="helv",
+                            color=color,
+                            avoid_overlay=True,
+                        )
+                        if overflow:
+                            self._append_text_to_new_pages(
+                                pdf_doc=pdf_doc,
+                                text=overflow,
+                                fontsize=fontsize,
+                                fontname="helv",
+                                color=color,
+                            )
+                        inserted = True
+                    elif "above" in position:
+                        raw_point = fitz.Point(rect.x0, rect.y0 - 4)
+                        start_point = self._clamp_start_point(page, raw_point, fontsize)
+                        overflow = self._insert_wrapped_text(
+                            pdf_doc=pdf_doc,
+                            start_page=page,
+                            start_point=start_point,
+                            text=text,
+                            fontsize=fontsize,
+                            fontname="helv",
+                            color=color,
+                            avoid_overlay=True,
+                        )
+                        if overflow:
+                            self._append_text_to_new_pages(
+                                pdf_doc=pdf_doc,
+                                text=overflow,
+                                fontsize=fontsize,
+                                fontname="helv",
+                                color=color,
+                            )
+                        inserted = True
+                    else:
+                        raw_point = fitz.Point(rect.x0, rect.y1 + self._line_height(fontsize))
+                        start_point = self._clamp_start_point(page, raw_point, fontsize)
+                        overflow = self._insert_wrapped_text(
+                            pdf_doc=pdf_doc,
+                            start_page=page,
+                            start_point=start_point,
+                            text=text,
+                            fontsize=fontsize,
+                            fontname="helv",
+                            color=color,
+                            avoid_overlay=True,
+                        )
+                        if overflow:
+                            self._append_text_to_new_pages(
+                                pdf_doc=pdf_doc,
+                                text=overflow,
+                                fontsize=fontsize,
+                                fontname="helv",
+                                color=color,
+                            )
+                        inserted = True
 
             if not inserted and page_number > 0 and page_number <= len(pdf_doc) and has_coordinates:
                 page = pdf_doc[page_number - 1]
@@ -491,16 +651,34 @@ class ToolExecutor:
                 else:
                     transformed = target_text.lower()
 
-            font_size = float(args.get("font_size", 11))
+            raw_font_size = args.get("font_size")
+            inferred_font_size = None
+            if tool_name == "change_font_size" and raw_font_size is None:
+                inferred_font_size = self._infer_font_size_from_reference(
+                    pdf_doc,
+                    str(args.get("reference_text", "")),
+                )
+            font_size = float(raw_font_size if raw_font_size is not None else (inferred_font_size or 11))
             font_name = str(args.get("font_family", "helv"))
             color = self._color_tuple(str(args.get("color", "black")))
+
+            if tool_name == "change_font_size" and raw_font_size is None and inferred_font_size is None:
+                return ToolExecutionResult(
+                    {
+                        "tool": tool_name,
+                        "status": "failed",
+                        "success": False,
+                        "output": {},
+                        "error": "Missing 'font_size'. Provide a number or reference_text (e.g. same as word X).",
+                    }
+                )
 
             if tool_name == "set_text_style":
                 style = str(args.get("style", ""))
                 if style == "bold":
-                    font_name = "helv"
+                    font_name = "hebo"
                 elif style == "italic":
-                    font_name = "tiro"
+                    font_name = "heit"
 
             changed = self._replace_text(
                 pdf_doc,
@@ -509,6 +687,7 @@ class ToolExecutor:
                 fontsize=font_size,
                 fontname=font_name,
                 color=color,
+                preserve_line_baseline=tool_name in {"change_font_size", "set_text_style", "change_font_type", "change_font_color"},
             )
         elif tool_name in {"highlight_text", "underline_text", "strikethrough_text"}:
             target_text = str(args.get("target_text", ""))

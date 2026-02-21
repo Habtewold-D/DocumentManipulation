@@ -95,6 +95,43 @@ def test_validate_plan_normalizes_change_font_size_from_command_text() -> None:
     assert args["font_size"] == 22
 
 
+def test_validate_plan_normalizes_change_font_size_reference_from_command_text() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "make the font size of worku test the same as word Degfie",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {"target_text": "worku test"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["reference_text"] == "Degfie"
+
+
+def test_validate_plan_normalizes_change_font_size_reference_alias() -> None:
+    state = {
+        "document_id": "doc-1",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {"target_text": "worku test", "reference_word": "Degfie"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["reference_text"] == "Degfie"
+
+
 def test_validate_plan_normalizes_add_text_aliases() -> None:
     state = {
         "document_id": "doc-1",
@@ -144,3 +181,28 @@ def test_validate_plan_add_text_includes_command_text() -> None:
     assert result["status"] == "validated"
     args = result["plan"][0]["args"]
     assert args["command"] == 'add this text at the end of the second page "hello"'
+
+
+def test_validate_plan_add_text_extracts_same_line_anchor_from_command() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": 'add this text "Role" next to "worku test" in the same line',
+        "plan": [
+            {
+                "tool": "add_text",
+                "args": {
+                    "text": "Role",
+                    "page_number": 1,
+                    "x": 72,
+                    "y": 72,
+                },
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["position"] == "next"
+    assert args["reference_text"] == "worku test"
