@@ -4,7 +4,7 @@ import { FileText, Sparkles, GitBranch, Shield } from "lucide-react";
 
 export default function LoginPage() {
   return (
-    <main className="min-h-[calc(100vh-3.5rem)] grid lg:grid-cols-2">
+    <main className="min-h-screen grid lg:grid-cols-2">
       {/* Left decorative panel */}
       <div className="hidden lg:flex relative overflow-hidden gradient-primary items-center justify-center p-12">
         {/* Animated floating shapes */}
