@@ -287,22 +287,17 @@ class ToolExecutor:
     def _infer_page_text_style(self, page: fitz.Page) -> dict[str, float | str] | None:
         text_dict = page.get_text("dict")
         last_span: dict[str, Any] | None = None
+        
+        # Result lists to be populated
         line_bboxes: list[tuple[float, float, float, float]] = []
         size_values: list[float] = []
-        line_heights: list[float] = []
         left_values: list[float] = []
         right_values: list[float] = []
 
+        # Pass 1: Collect font sizes to determine the primary size for the page
         for block in text_dict.get("blocks", []):
             for line in block.get("lines", []):
-                line_bbox = line.get("bbox")
-                spans = line.get("spans", [])
-                merged_text = " ".join(str(span.get("text", "")).strip() for span in spans).strip()
-                line_bbox_tuple: tuple[float, float, float, float] | None = None
-                if isinstance(line_bbox, (list, tuple)) and len(line_bbox) == 4:
-                    line_bbox_tuple = (float(line_bbox[0]), float(line_bbox[1]), float(line_bbox[2]), float(line_bbox[3]))
-
-                for span in spans:
+                for span in line.get("spans", []):
                     span_text = str(span.get("text", "")).strip()
                     if not span_text:
                         continue
@@ -311,12 +306,53 @@ class ToolExecutor:
                     if isinstance(size, (int, float)):
                         size_values.append(float(size))
 
-                if line_bbox_tuple:
+        if not last_span:
+            return None
+
+        primary_fontsize = float(statistics.median(size_values)) if size_values else 11.0
+        fontname = self._map_span_font_to_base14(str(last_span.get("font", "")))
+
+        # Pass 2: Calculate line spacings and layout boundaries using detected font size
+        prev_line_baseline: float | None = None
+        inter_line_distances: list[float] = []
+
+        for block in text_dict.get("blocks", []):
+            block_lines = block.get("lines", [])
+            prev_line_baseline = None
+            for line in block_lines:
+                line_bbox = line.get("bbox")
+                spans = line.get("spans", [])
+                merged_text = " ".join(str(span.get("text", "")).strip() for span in spans).strip()
+                
+                if isinstance(line_bbox, (list, tuple)) and len(line_bbox) == 4:
+                    line_bbox_tuple = (float(line_bbox[0]), float(line_bbox[1]), float(line_bbox[2]), float(line_bbox[3]))
                     line_bboxes.append(line_bbox_tuple)
-                    line_heights.append(max(1.0, line_bbox_tuple[3] - line_bbox_tuple[1]))
+                    
+                    # Detect line baseline
+                    curr_baseline: float | None = None
+                    for span in spans:
+                        if str(span.get("text", "")).strip():
+                            origin = span.get("origin")
+                            if isinstance(origin, (list, tuple)) and len(origin) == 2:
+                                curr_baseline = float(origin[1])
+                                break
+                    
+                    if curr_baseline is None:
+                        curr_baseline = line_bbox_tuple[3] # Fallback
+
+                    if prev_line_baseline is not None:
+                        dist = curr_baseline - prev_line_baseline
+                        # Valid line skip should be roughly between 0.9x and 3.5x font size
+                        if primary_fontsize * 0.9 <= dist <= primary_fontsize * 3.5:
+                            inter_line_distances.append(dist)
+                    
+                    prev_line_baseline = curr_baseline
+
                     if len(merged_text) >= 25:
                         left_values.append(line_bbox_tuple[0])
                         right_values.append(line_bbox_tuple[2])
+
+        fontsize = primary_fontsize
 
         if not last_span:
             return None
@@ -328,10 +364,13 @@ class ToolExecutor:
             fontsize = float(size) if isinstance(size, (int, float)) else 11.0
         fontname = self._map_span_font_to_base14(str(last_span.get("font", "")))
 
-        if line_heights:
-            median_height = float(statistics.median(line_heights))
-            # Use a slightly larger multiplier to better match observed paragraph spacing
-            line_height = max(self._line_height(fontsize) * 1.25, median_height * 1.25)
+        if inter_line_distances:
+            # Use the median of observed line-to-line distances for accurate leading
+            line_height = float(statistics.median(inter_line_distances))
+        elif line_bboxes:
+            # Fallback to bbox height with a 1.2x multiplier if single line
+            median_bbox_height = float(statistics.median([b[3]-b[1] for b in line_bboxes]))
+            line_height = max(self._line_height(fontsize), median_bbox_height * 1.2)
         else:
             line_height = self._line_height(fontsize)
 
@@ -391,8 +430,8 @@ class ToolExecutor:
 
         line_info = self._find_line_for_rect(page, anchor_rect)
         anchor_line_bottom = line_info[0].y1 if line_info else anchor_rect.y1
-        # Use a more generous paragraph spacing to avoid compacting newly inserted paragraphs
-        paragraph_spacing = resolved_line_height * 1.4
+        # Use a paragraph spacing that feels natural (usually 1.5x to 2x the line height)
+        paragraph_spacing = resolved_line_height * 1.5
         start_y = anchor_line_bottom + paragraph_spacing
 
         bottom_limit = page.rect.height - margin
@@ -477,7 +516,9 @@ class ToolExecutor:
             if not overlaps:
                 return candidate_y
 
-            candidate_y = max(rect.y1 for rect in overlaps) + line_height * 0.4
+            # Push the baseline down by the height needed to clear the obstacle
+            # Text box starts at y - 0.9h. So new_y - 0.9h >= rect.y1
+            candidate_y = max(rect.y1 for rect in overlaps) + (line_height * 0.9)
             if candidate_y > bottom_limit:
                 return candidate_y
 
@@ -506,8 +547,8 @@ class ToolExecutor:
 
         if words:
             last_bottom = max(float(w[3]) for w in words)
-            # Add a slightly larger gap after existing content so appended paragraphs match surrounding spacing
-            start_y = last_bottom + (resolved_line_height * 1.2)
+            # Add a gap after existing content that matches the inferred vertical rhythm
+            start_y = last_bottom + (resolved_line_height * 1.5)
         else:
             start_y = margin + resolved_line_height
 
