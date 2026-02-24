@@ -59,6 +59,138 @@ class ToolExecutor:
             pages.append({"page": index, "hash": page_hash})
         return {"pages": pages}
 
+    def _search_for_text_robust(self, page: fitz.Page, text: str) -> list[fitz.Rect]:
+        if not text.strip():
+            return []
+        # Path 1: Exact
+        rects = page.search_for(text)
+        if rects:
+            return rects
+        # Path 2: Line-break insensitive
+        if "\n" in text:
+            rects = page.search_for(text.replace("\n", " "))
+            if rects:
+                return rects
+        # Path 3: Normalized whitespace
+        normalized = " ".join(text.split())
+        if normalized != text:
+            rects = page.search_for(normalized)
+            if rects:
+                return rects
+        return []
+
+    def _collect_and_clear_page_after(self, page: fitz.Page, y_threshold: float) -> str:
+        """Collects all text below y_threshold and redacts it from the page."""
+        blocks = page.get_text("blocks")
+        # Blocks format: (x0, y0, x1, y1, "text", block_no, block_type)
+        # We look for text blocks (type 0) whose top (y0) is below the threshold
+        remaining_blocks = [b for b in blocks if b[1] >= y_threshold - 2 and b[6] == 0]
+        if not remaining_blocks:
+            return ""
+        
+        # Sort by vertical position
+        remaining_blocks.sort(key=lambda b: b[1])
+        captured_text = "\n\n".join(b[4].strip() for b in remaining_blocks)
+        
+        # Redact the area
+        for b in remaining_blocks:
+            page.add_redact_annot(b[:4], fill=(1, 1, 1))
+        page.apply_redactions()
+        return captured_text
+
+    def _capture_rest_of_document_data(self, pdf_doc: fitz.Document, start_page_idx: int, anchor_rect: fitz.Rect) -> list[dict[str, Any]]:
+        """Captures structured text blocks and tails for continuous reflow."""
+        captured_blocks: list[dict[str, Any]] = []
+        
+        def process_page(page: fitz.Page, y_min: float, x_min_on_first_line: float | None = None):
+            text_dict = page.get_text("dict")
+            blocks = sorted(text_dict.get("blocks", []), key=lambda b: b["bbox"][1])
+            
+            for block in blocks:
+                if block.get("type") != 0: continue
+                bbox = block.get("bbox")
+                
+                # Case 1: Strictly above the line of interest
+                if bbox[3] < y_min - 2: continue
+                
+                # Case 2: Intersecting the line (The block containing our target)
+                if bbox[1] < y_min + 2 and bbox[3] > y_min - 2 and x_min_on_first_line is not None:
+                    # Capture only text to the right or below the anchor on this block
+                    tail_text_parts = []
+                    for line in block.get("lines", []):
+                        lbox = line.get("bbox")
+                        # Same line: only if to the right
+                        if lbox[1] < y_min + 2 and lbox[3] > y_min - 2:
+                            spans_after = [s for s in line.get("spans", []) if s["bbox"][0] > x_min_on_first_line + 2]
+                            if spans_after:
+                                tail_text_parts.append("".join(s.get("text", "") for s in spans_after))
+                                for s in spans_after:
+                                    page.add_redact_annot(s["bbox"], fill=(1, 1, 1))
+                        # Lines below in the same block
+                        elif lbox[1] >= y_min + 2:
+                            line_text = "".join(s.get("text", "") for s in line.get("spans", []))
+                            if line_text:
+                                tail_text_parts.append("\n" + line_text)
+                                page.add_redact_annot(lbox, fill=(1, 1, 1))
+                    
+                    combined_tail = "".join(tail_text_parts).strip()
+                    if combined_tail:
+                        first_span = block["lines"][0]["spans"][0] if block["lines"] else None
+                        captured_blocks.append({
+                            "text": combined_tail,
+                            "x0": float(bbox[0]),
+                            "x1": float(bbox[2]),
+                            "fontsize": float(first_span["size"]) if first_span else 11.0,
+                            "fontname": self._map_span_font_to_base14(str(first_span["font"])) if first_span else "helv",
+                            "color": self._color_tuple_from_int(first_span["color"]) if first_span else (0,0,0),
+                            "continuation_x": float(block["lines"][1]["bbox"][0]) if len(block["lines"]) > 1 else float(bbox[0]),
+                            "is_tail": True
+                        })
+                    continue
+
+                # Case 3: Strictly below the line/threshold
+                if bbox[1] < y_min - 2: continue
+                
+                block_text = page.get_text("text", clip=bbox).strip()
+                if not block_text: continue
+
+                # Infer continuation_x (base margin) from second line if available
+                # This preserves first-line indents correctly.
+                cont_x = float(bbox[0])
+                if len(block.get("lines", [])) > 1:
+                    cont_x = float(block["lines"][1]["bbox"][0])
+
+                first_span = [s for line in block.get("lines", []) for s in line.get("spans", [])][0]
+                captured_blocks.append({
+                    "text": block_text,
+                    "x0": float(bbox[0]),
+                    "x1": float(bbox[2]),
+                    "fontsize": float(first_span.get("size", 11.0)),
+                    "fontname": self._map_span_font_to_base14(str(first_span.get("font", ""))),
+                    "color": self._color_tuple_from_int(first_span.get("color", 0)),
+                    "continuation_x": cont_x
+                })
+                page.add_redact_annot(bbox, fill=(1, 1, 1))
+            page.apply_redactions()
+
+        # 1. Current page from anchor
+        process_page(pdf_doc[start_page_idx], anchor_rect.y1, anchor_rect.x1)
+            
+        # 2. All subsequent pages
+        for i in range(start_page_idx + 1, len(pdf_doc)):
+            process_page(pdf_doc[i], 0)
+            
+        return captured_blocks
+
+    @staticmethod
+    def _color_tuple_from_int(color_int: int) -> tuple[float, float, float]:
+        # Convert fitz integer color to RGB tuple
+        return (
+            ((color_int >> 16) & 0xFF) / 255.0,
+            ((color_int >> 8) & 0xFF) / 255.0,
+            (color_int & 0xFF) / 255.0
+        )
+
     def _replace_text(
         self,
         pdf_doc: fitz.Document,
@@ -70,46 +202,106 @@ class ToolExecutor:
         preserve_line_baseline: bool = False,
     ) -> int:
         replacements = 0
-        for page in pdf_doc:
-            rects = page.search_for(old_text)
-            for rect in rects:
-                page.add_redact_annot(rect, fill=(1, 1, 1))
-            if rects:
-                page.apply_redactions()
-            for rect in rects:
-                long_paragraph_replace = len(new_text.strip()) > 80 and len(new_text.strip()) > max(20, len(old_text.strip()) * 2)
-                line_info = self._find_line_for_rect(page, rect)
+        p = 0
+        while p < len(pdf_doc):
+            page = pdf_doc[p]
+            rects = self._search_for_text_robust(page, old_text)
+            if not rects:
+                p += 1
+                continue
+            
+            # Process the first rect. Shifting content will invalidate subsequent rects.
+            rect = rects[0]
+            
+            # 1. Capture rest of document using structured data
+            # Use the full rect so we can capture the "tail" on the same line
+            captured_blocks = self._capture_rest_of_document_data(pdf_doc, p, rect)
+            
+            # 2. Redact target
+            page.add_redact_annot(rect, fill=(1, 1, 1))
+            page.apply_redactions()
+            
+            # 3. Insert new text
+            raw_new_text = new_text.strip()
+            line_info = self._find_line_for_rect(page, rect)
+            line_h = self._line_height(fontsize)
 
-                if line_info and (preserve_line_baseline or long_paragraph_replace):
-                    line_rect, baseline_y = line_info
-                    start_x = line_rect.x0 if long_paragraph_replace else rect.x0
-                    start_point = fitz.Point(start_x, baseline_y)
-                    respect_start_y = True
+            if line_info:
+                line_rect, baseline_y = line_info
+                # Start exactly where the old text was
+                start_point = fitz.Point(rect.x0, baseline_y)
+                respect_start_y = True
+                
+                # Base margin for wrapped lines should be the block's margin,
+                # not necessarily the current line's x0 (which might be an indent).
+                continuation_x = line_rect.x0
+                text_dict = page.get_text("dict")
+                for block in text_dict.get("blocks", []):
+                    if fitz.Rect(block["bbox"]).intersects(rect):
+                        if len(block.get("lines", [])) > 1:
+                            continuation_x = float(block["lines"][1]["bbox"][0])
+                        else:
+                            continuation_x = float(block["bbox"][0])
+                        break
+            else:
+                baseline_y = rect.y1 - 1 if preserve_line_baseline else max(36, rect.y0 + fontsize)
+                start_point = fitz.Point(rect.x0, baseline_y)
+                respect_start_y = preserve_line_baseline
+                continuation_x = rect.x0
+
+            res = self._insert_wrapped_text_ext(
+                pdf_doc=pdf_doc,
+                start_page=page,
+                start_point=start_point,
+                text=new_text,
+                fontsize=fontsize,
+                fontname=fontname,
+                color=color,
+                avoid_overlay=False,
+                respect_start_y=respect_start_y,
+                continuation_x=continuation_x
+            )
+            
+            # 4. Progressively reflow all captured structured blocks
+            current_page = res.final_page
+            
+            for i, block in enumerate(captured_blocks):
+                block_line_h = self._line_height(block["fontsize"])
+                
+                # Logic: Only a captured 'tail' (mid-line continuation) can follow on the SAME line.
+                # Everything else MUST start a new paragraph.
+                if i == 0 and block.get("is_tail"):
+                    start_pt = res.final_point
+                    resp_y = True
+                    # If we are continuing on the SAME line, add a joining space
+                    if not res.ended_with_newline:
+                        if not new_text.endswith((' ', '\n')) and not block["text"].startswith((' ', '\n')):
+                            block["text"] = " " + block["text"]
                 else:
-                    baseline_y = rect.y1 - 1 if preserve_line_baseline else max(36, rect.y0 + fontsize)
-                    start_point = fitz.Point(rect.x0, baseline_y)
-                    respect_start_y = preserve_line_baseline
+                    # Subsequent blocks or non-tails start with a paragraph gap
+                    start_pt = fitz.Point(block["x0"], res.final_point.y + (block_line_h * 1.5))
+                    resp_y = True
 
-                overflow = self._insert_wrapped_text(
+                block_res = self._insert_wrapped_text_ext(
                     pdf_doc=pdf_doc,
-                    start_page=page,
-                    start_point=start_point,
-                    text=new_text,
-                    fontsize=fontsize,
-                    fontname=fontname,
-                    color=color,
-                    avoid_overlay=True,
-                    respect_start_y=respect_start_y,
+                    start_page=current_page,
+                    start_point=start_pt,
+                    text=block["text"],
+                    fontsize=block["fontsize"],
+                    fontname=block["fontname"],
+                    color=block["color"],
+                    avoid_overlay=False,
+                    respect_start_y=resp_y,
+                    line_height_override=block_line_h,
+                    right_limit_x=block["x1"],
+                    continuation_x=block.get("continuation_x", block["x0"])
                 )
-                if overflow:
-                    self._append_text_to_new_pages(
-                        pdf_doc=pdf_doc,
-                        text=overflow,
-                        fontsize=fontsize,
-                        fontname=fontname,
-                        color=color,
-                    )
-                replacements += 1
+                current_page = block_res.final_page
+                res = block_res # Update reference for next gap
+            
+            replacements += 1
+            continue 
+            
         return replacements
 
     @staticmethod
@@ -118,21 +310,38 @@ class ToolExecutor:
 
     @staticmethod
     def _wrap_text_to_width(text: str, fontname: str, fontsize: float, max_width: float) -> list[str]:
-        words = text.split()
-        if not words:
-            return []
+        # Split by paragraphs first to preserve structure
+        paragraphs = text.split('\n')
+        final_lines: list[str] = []
+        
+        for p in paragraphs:
+            p_clean = p.strip()
+            if not p_clean:
+                final_lines.append("") # Empty line placeholder for paragraph gap
+                continue
+                
+            words = p_clean.split()
+            if not words:
+                continue
+                
+            current_line = words[0]
+            for word in words[1:]:
+                candidate = f"{current_line} {word}"
+                if fitz.get_text_length(candidate, fontname=fontname, fontsize=fontsize) <= max_width:
+                    current_line = candidate
+                else:
+                    final_lines.append(current_line)
+                    current_line = word
+            final_lines.append(current_line)
+            
+        return final_lines
 
-        lines: list[str] = []
-        current = words[0]
-        for word in words[1:]:
-            candidate = f"{current} {word}"
-            if fitz.get_text_length(candidate, fontname=fontname, fontsize=fontsize) <= max_width:
-                current = candidate
-            else:
-                lines.append(current)
-                current = word
-        lines.append(current)
-        return lines
+    class WrappedTextResult:
+        def __init__(self, overflow: str, final_page: fitz.Page, final_point: fitz.Point, ended_with_newline: bool = False):
+            self.overflow = overflow
+            self.final_page = final_page
+            self.final_point = final_point
+            self.ended_with_newline = ended_with_newline
 
     def _insert_wrapped_text(
         self,
@@ -149,84 +358,105 @@ class ToolExecutor:
         right_limit_x: float | None = None,
         continuation_x: float | None = None,
     ) -> str:
+        # Wrapper for backward compatibility
+        result = self._insert_wrapped_text_ext(
+            pdf_doc, start_page, start_point, text, fontsize, fontname, color,
+            avoid_overlay, respect_start_y, line_height_override, right_limit_x, continuation_x
+        )
+        return result.overflow
+
+    def _insert_wrapped_text_ext(
+        self,
+        pdf_doc: fitz.Document,
+        start_page: fitz.Page,
+        start_point: fitz.Point,
+        text: str,
+        fontsize: float,
+        fontname: str,
+        color: tuple[float, float, float],
+        avoid_overlay: bool = False,
+        respect_start_y: bool = False,
+        line_height_override: float | None = None,
+        right_limit_x: float | None = None,
+        continuation_x: float | None = None,
+    ) -> WrappedTextResult:
         margin = 36.0
         page = start_page
-        page_index = page.number
         line_height = line_height_override if line_height_override is not None else self._line_height(fontsize)
 
         y = start_point.y if respect_start_y else max(start_point.y, margin + line_height)
-        effective_right_x = min(page.rect.width - margin, right_limit_x) if right_limit_x is not None else page.rect.width - margin
-        max_width = max(80.0, effective_right_x - start_point.x)
-        lines = self._wrap_text_to_width(text, fontname=fontname, fontsize=fontsize, max_width=max_width)
-
-        occupied_cache: dict[int, list[fitz.Rect]] = {}
-        remaining_lines: list[str] = []
-        for line in lines:
-            while True:
-                bottom_limit = page.rect.height - margin
-                if y > bottom_limit:
-                    page_index += 1
-                    if page_index < len(pdf_doc):
-                        page = pdf_doc[page_index]
-                    else:
-                        page = pdf_doc.new_page()
-                    y = margin + line_height
-                    next_x = continuation_x if continuation_x is not None else margin
-                    effective_right_x = (
-                        min(page.rect.width - margin, right_limit_x) if right_limit_x is not None else page.rect.width - margin
-                    )
-                    max_width = max(80.0, effective_right_x - next_x)
-
-                if y > page.rect.height - margin:
-                    remaining_lines.append(line)
-                    break
-
-                x = start_point.x if page.number == start_page.number else (continuation_x if continuation_x is not None else margin)
-                if avoid_overlay:
-                    if page.number not in occupied_cache:
-                        occupied_cache[page.number] = [
-                            fitz.Rect(w[0], w[1], w[2], w[3]) for w in page.get_text("words")
-                        ]
-                    y = self._resolve_non_overlapping_y(
-                        occupied_rects=occupied_cache[page.number],
-                        x=x,
-                        y=y,
-                        line=line,
-                        fontsize=fontsize,
-                        fontname=fontname,
-                        line_height=line_height,
-                        bottom_limit=bottom_limit,
-                    )
+        curr_x = start_point.x
+        
+        paragraphs = text.split('\n')
+        last_x, last_y = curr_x, y
+        
+        ended_with_newline = text.endswith('\n') or (len(paragraphs) > 1 and not paragraphs[-1].strip())
+        
+        for p_idx, p_text in enumerate(paragraphs):
+            p_clean = p_text.strip()
+            if not p_clean:
+                # Actual empty line / paragraph gap
+                y += line_height * 0.7
+                curr_x = continuation_x if continuation_x is not None else margin
+                last_y = y
+                last_x = curr_x
+                continue
+            
+            words = p_clean.split()
+            current_line_words = []
+            
+            for word in words:
+                while True:
+                    bottom_limit = page.rect.height - margin
                     if y > bottom_limit:
-                        page_index += 1
-                        if page_index < len(pdf_doc):
-                            page = pdf_doc[page_index]
+                        next_idx = page.number + 1
+                        if next_idx < len(pdf_doc):
+                            page = pdf_doc[next_idx]
                         else:
                             page = pdf_doc.new_page()
                         y = margin + line_height
-                        next_x = continuation_x if continuation_x is not None else margin
-                        effective_right_x = (
-                            min(page.rect.width - margin, right_limit_x) if right_limit_x is not None else page.rect.width - margin
-                        )
-                        max_width = max(80.0, effective_right_x - next_x)
-                        continue
-
-                page.insert_text(
-                    point=(x, y),
-                    text=line,
-                    fontsize=fontsize,
-                    fontname=fontname,
-                    color=color,
-                )
-                if avoid_overlay:
-                    line_width = fitz.get_text_length(line, fontname=fontname, fontsize=fontsize)
-                    occupied_cache[page.number].append(
-                        fitz.Rect(x, y - line_height * 0.9, x + line_width, y + line_height * 0.2)
-                    )
+                        curr_x = continuation_x if continuation_x is not None else margin
+                    
+                    eff_right = min(page.rect.width - margin, right_limit_x) if right_limit_x is not None else page.rect.width - margin
+                    max_w = max(50.0, eff_right - curr_x)
+                    
+                    test_line = " ".join(current_line_words + [word])
+                    if fitz.get_text_length(test_line, fontname=fontname, fontsize=fontsize) <= max_w:
+                        current_line_words.append(word)
+                        break
+                    else:
+                        # Flush current line
+                        if current_line_words:
+                            line_str = " ".join(current_line_words)
+                            page.insert_text((curr_x, y), line_str, fontsize=fontsize, fontname=fontname, color=color)
+                            last_y = y
+                            last_x = curr_x + fitz.get_text_length(line_str, fontname=fontname, fontsize=fontsize)
+                        
+                        y += line_height
+                        curr_x = continuation_x if continuation_x is not None else margin
+                        current_line_words = []
+                        # Continue to retry 'word' on the new line
+            
+            # Flush final line of paragraph
+            if current_line_words:
+                line_str = " ".join(current_line_words)
+                page.insert_text((curr_x, y), line_str, fontsize=fontsize, fontname=fontname, color=color)
+                last_y = y
+                last_x = curr_x + fitz.get_text_length(line_str, fontname=fontname, fontsize=fontsize)
+                
+            # Move to next line for start of next paragraph
+            if p_idx < len(paragraphs) - 1:
                 y += line_height
-                break
+                curr_x = continuation_x if continuation_x is not None else margin
+                last_y = y
+                last_x = curr_x
 
-        return " ".join(remaining_lines).strip()
+        return self.WrappedTextResult(
+            overflow="",
+            final_page=page,
+            final_point=fitz.Point(last_x, last_y),
+            ended_with_newline=ended_with_newline
+        )
 
     @staticmethod
     def _infer_font_size_from_reference(pdf_doc: fitz.Document, reference_text: str) -> float | None:
@@ -444,10 +674,17 @@ class ToolExecutor:
                 right_x = float(style_new["right_x"])
             start_y = margin + resolved_line_height
 
+        # 1. Capture structured blocks
+        # We use a dummy rect to define the horizontal line below which everything is captured.
+        dummy_rect = fitz.Rect(left_x, anchor_line_bottom + paragraph_spacing * 0.2, right_x, anchor_line_bottom + paragraph_spacing * 0.3)
+        captured_blocks = self._capture_rest_of_document_data(pdf_doc, page.number, dummy_rect)
+
         left_x = max(margin, min(left_x, page.rect.width - margin - 80))
         right_x = max(left_x + 80, min(right_x, page.rect.width - margin))
         start_point = self._clamp_start_point(page, fitz.Point(left_x, start_y), resolved_fontsize)
-        overflow = self._insert_wrapped_text(
+        
+        # 2. Insert new paragraph
+        res = self._insert_wrapped_text_ext(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=start_point,
@@ -455,13 +692,34 @@ class ToolExecutor:
             fontsize=resolved_fontsize,
             fontname=resolved_fontname,
             color=color,
-            avoid_overlay=True,
+            avoid_overlay=False,
+            respect_start_y=True,
             line_height_override=resolved_line_height,
             right_limit_x=right_x,
             continuation_x=left_x,
         )
-        if overflow:
-            self._append_text_to_new_pages(pdf_doc, overflow, resolved_fontsize, resolved_fontname, color)
+        
+        # 3. Reflow structured blocks
+        current_page = res.final_page
+        
+        for block in captured_blocks:
+            block_line_h = self._line_height(block["fontsize"])
+            block_res = self._insert_wrapped_text_ext(
+                pdf_doc=pdf_doc,
+                start_page=current_page,
+                start_point=fitz.Point(block["x0"], res.final_point.y + (block_line_h * 1.5)),
+                text=block["text"],
+                fontsize=block["fontsize"],
+                fontname=block["fontname"],
+                color=block["color"],
+                avoid_overlay=False,
+                respect_start_y=True,
+                line_height_override=block_line_h,
+                right_limit_x=block["x1"],
+                continuation_x=block.get("continuation_x", block["x0"])
+            )
+            current_page = block_res.final_page
+            res = block_res
 
     def _append_text_to_new_pages(
         self,
@@ -693,10 +951,30 @@ class ToolExecutor:
         pdf_doc = self._load_doc(source_asset_id)
         changed = 0
 
-        if tool_name == "replace_text":
-            changed = self._replace_text(pdf_doc, str(args.get("old_text", "")), str(args.get("new_text", "")))
-        elif tool_name == "search_replace":
-            changed = self._replace_text(pdf_doc, str(args.get("search", "")), str(args.get("replace", "")))
+        if tool_name in {"replace_text", "search_replace"}:
+            old_text = str(args.get("old_text", "") or args.get("search", ""))
+            new_text = str(args.get("new_text", "") or args.get("replace", ""))
+            
+            # Infer style from the text being replaced
+            inferred_size = self._infer_font_size_from_reference(pdf_doc, old_text)
+            style = self._infer_page_text_style(pdf_doc[0]) # Default style from first page
+            
+            style_fontsize = style.get("fontsize") if style else 11.0
+            style_fontname = style.get("fontname") if style else "helv"
+            
+            fontsize = float(args.get("font_size") or inferred_size or style_fontsize)
+            fontname = str(args.get("font_family") or style_fontname)
+            color_raw = args.get("color")
+            color = self._color_tuple(str(color_raw)) if color_raw else (0, 0, 0)
+
+            changed = self._replace_text(
+                pdf_doc, 
+                old_text=old_text, 
+                new_text=new_text,
+                fontsize=fontsize,
+                fontname=fontname,
+                color=color
+            )
         elif tool_name == "add_text":
             text = self._first_non_empty_string(args.get("text"), args.get("new_text"), args.get("content"), args.get("value"))
             if not text:
