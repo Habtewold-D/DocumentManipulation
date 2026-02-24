@@ -206,3 +206,24 @@ def test_validate_plan_add_text_extracts_same_line_anchor_from_command() -> None
     args = result["plan"][0]["args"]
     assert args["position"] == "next"
     assert args["reference_text"] == "worku test"
+
+
+def test_validate_plan_add_text_extracts_end_position_from_last_part_command() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "add this paragraph to the last part",
+        "plan": [
+            {
+                "tool": "add_text",
+                "args": {
+                    "text": "New paragraph",
+                },
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["position"] == "end"

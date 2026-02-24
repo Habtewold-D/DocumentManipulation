@@ -21,6 +21,29 @@ function buildUrl(baseUrl: string, path: string) {
   return `${baseUrl}${normalizedPath}`;
 }
 
+function getHostFallbackBaseUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const configured = new URL(API_BASE_URL);
+    const currentHost = window.location.hostname;
+    if (!currentHost) {
+      return null;
+    }
+
+    if (configured.hostname !== "localhost" && configured.hostname !== "127.0.0.1") {
+      return null;
+    }
+
+    configured.hostname = currentHost;
+    return configured.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAccessToken();
   const headers = new Headers(init?.headers);
@@ -36,7 +59,18 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     headers,
   };
 
-  const response = await fetch(buildUrl(API_BASE_URL, path), requestInit);
+  const primaryUrl = buildUrl(API_BASE_URL, path);
+
+  let response: Response;
+  try {
+    response = await fetch(primaryUrl, requestInit);
+  } catch (error) {
+    const fallbackBaseUrl = getHostFallbackBaseUrl();
+    if (!fallbackBaseUrl) {
+      throw error;
+    }
+    response = await fetch(buildUrl(fallbackBaseUrl, path), requestInit);
+  }
 
   if (!response.ok) {
     const text = await response.text();

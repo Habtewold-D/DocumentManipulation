@@ -104,6 +104,8 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
                     args["reference_text"] = extracted
 
     if tool_name == "add_text":
+        auto_coordinates = False
+
         if "text" not in args:
             for alias in ("new_text", "content", "value", "insert_text"):
                 value = args.get(alias)
@@ -127,6 +129,8 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
             lowered = command.lower()
             if any(token in lowered for token in ("next to", "beside", "same line", "on same line", "inline")):
                 args["position"] = "next"
+            elif any(token in lowered for token in ("last part", "end of", "at the end", "append", "at the last", "to the last")):
+                args["position"] = "end"
             elif any(token in lowered for token in ("below", "under")):
                 args["position"] = "below"
             elif "above" in lowered:
@@ -147,6 +151,19 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
 
         if isinstance(command, str) and command.strip() and "command" not in args:
             args["command"] = command
+
+        if "page_number" not in args:
+            args["page_number"] = 1
+            auto_coordinates = True
+        if "x" not in args:
+            args["x"] = 72
+            auto_coordinates = True
+        if "y" not in args:
+            args["y"] = 72
+            auto_coordinates = True
+
+        if auto_coordinates:
+            args["_auto_coordinates"] = True
 
 
 def validate_plan(state: dict) -> dict:
