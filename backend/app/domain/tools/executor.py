@@ -111,32 +111,22 @@ class ToolExecutor:
                 
         return matches
 
-    def _collect_and_clear_page_after(self, page: fitz.Page, y_threshold: float) -> str:
-        """Collects all text below y_threshold and redacts it from the page."""
-        blocks = page.get_text("blocks")
-        # Blocks format: (x0, y0, x1, y1, "text", block_no, block_type)
-        # We look for text blocks (type 0) whose top (y0) is below the threshold
-        remaining_blocks = [b for b in blocks if b[1] >= y_threshold - 2 and b[6] == 0]
-        if not remaining_blocks:
-            return ""
-        
-        # Sort by vertical position
-        remaining_blocks.sort(key=lambda b: b[1])
-        captured_text = "\n\n".join(b[4].strip() for b in remaining_blocks)
-        
-        # Redact the area
-        for b in remaining_blocks:
-            page.add_redact_annot(b[:4], fill=(1, 1, 1))
-        page.apply_redactions()
-        return captured_text
-
-    def _capture_rest_of_document_data(self, pdf_doc: fitz.Document, start_page_idx: int, y_threshold: float, x_threshold: float | None = None) -> list[dict[str, Any]]:
-        """Captures structured text blocks and tails for continuous reflow."""
+    def _capture_rest_of_document_data(self, pdf_doc: fitz.Document, start_page_idx: int, y_threshold: float, x_threshold: float | None = None, gap_reference_y: float | None = None) -> list[dict[str, Any]]:
+        """Captures structured text blocks and tails for continuous reflow.
+        gap_reference_y: The y-coordinate to measure the first gap from (usually anchor bottom).
+        """
         captured_blocks: list[dict[str, Any]] = []
+        last_block_text = ""
         
-        def process_page(page: fitz.Page, y_min: float, x_min_on_first_line: float | None = None):
+        def process_page(page: fitz.Page, y_min: float, x_min_on_first_line: float | None = None, is_first_page: bool = False):
+            nonlocal last_block_text
             text_dict = page.get_text("dict")
             blocks = sorted(text_dict.get("blocks", []), key=lambda b: b["bbox"][1])
+            
+            # Use BASELINE TRACKING for absolute spatial precision
+            # prev_block_baseline: the Y of the LAST line of the previous block
+            prev_block_baseline = y_min 
+            is_first_block_on_page = True
             
             for block in blocks:
                 if block.get("type") != 0: continue
@@ -144,6 +134,11 @@ class ToolExecutor:
                 
                 # Case 1: Strictly above the line of interest
                 if bbox[3] < y_min - 2: continue
+                
+                # Logic for "Same Paragraph" detection
+                # If the gap between this block and the previous one is small (e.g. < 0.3x fontsize),
+                # it's likely a continuation of the same text flow (sentence), not a new paragraph.
+                is_same_para = False
                 
                 # Case 2: Intersecting the line (The block containing our target)
                 # This mode handles both mid-line tails and full vertical splits.
@@ -190,8 +185,13 @@ class ToolExecutor:
                             "fontname": self._map_span_font_to_base14(str(first_span["font"])) if first_span else "helv",
                             "color": self._color_tuple_from_int(first_span["color"]) if first_span else (0,0,0),
                             "continuation_x": float(block["lines"][1]["bbox"][0]) if len(block["lines"]) > 1 else float(bbox[0]),
-                            "is_tail": is_actual_tail
+                            "is_tail": is_actual_tail,
+                            "same_paragraph": False, # Tails always start the fresh flow
+                            "original_baseline_height": float(self._infer_vertical_rhythm(page, first_span["size"])[0]) if first_span else 12.1
                         })
+                    # Track baseline of the last line processed in this block
+                    last_line = block["lines"][-1] if block.get("lines") else None
+                    prev_block_baseline = last_line["spans"][0]["origin"][1] if last_line and last_line.get("spans") else bbox[3]
                     continue
 
                 # Case 3: Strictly below the line/threshold
@@ -199,36 +199,78 @@ class ToolExecutor:
                 
                 block_text = page.get_text("text", clip=bbox).strip()
                 if not block_text: continue
-                
+
                 # Mark for removal
                 page.add_redact_annot(bbox, fill=(1, 1, 1))
 
-                # Infer continuation_x (base margin) from second line if available
-                # This preserves first-line indents correctly.
+                # Extract typography metrics from correctly scoped block spans
+                block_spans = [s for line in block.get("lines", []) for s in line.get("spans", [])]
+                fs = float(block_spans[0].get("size", 11.0)) if block_spans else 11.0
+
+                # MARGIN SANITIZATION:
                 cont_x = float(bbox[0])
                 if len(block.get("lines", [])) > 1:
                     cont_x = float(block["lines"][1]["bbox"][0])
 
-                first_span = [s for line in block.get("lines", []) for s in line.get("spans", [])][0]
+                # BASELINE-TO-BASELINE RHYTHM:
+                # Capture the exact mathematical distance between line baselines.
+                first_line = block["lines"][0] if block.get("lines") else None
+                curr_first_baseline = first_line["spans"][0]["origin"][1] if first_line and first_line.get("spans") else bbox[3]
+                
+                curr_gap = curr_first_baseline - prev_block_baseline
+                force_new_para = False
+                
+                if is_first_block_on_page and not is_first_page:
+                    curr_gap = 0
+                    if last_block_text.strip().endswith((".", "!", "?", ":")):
+                        force_new_para = True
+                
+                is_first_block_on_page = False
+                
+                # Update rhythm for this block
+                lh, pg = self._infer_vertical_rhythm(page, fs)
+                
+                # MICRO-PRECISION: Capture exact baseline leading for this specific block
+                original_lh = lh
+                if len(block.get("lines", [])) > 1:
+                    line_dists = []
+                    for idx in range(1, len(block["lines"])):
+                        prev_l = block["lines"][idx-1]
+                        curr_l = block["lines"][idx]
+                        if prev_l.get("spans") and curr_l.get("spans"):
+                            line_dists.append(curr_l["spans"][0]["origin"][1] - prev_l["spans"][0]["origin"][1])
+                    if line_dists:
+                        original_lh = float(statistics.median(line_dists))
+
+                # TIGHT PROXIMITY: Any gap significantly larger than leading is a paragraph break.
+                is_same_para = (curr_gap < (lh + 1.5)) and (not force_new_para)
+
                 captured_blocks.append({
                     "text": block_text,
                     "x0": float(bbox[0]),
                     "x1": float(bbox[2]),
-                    "fontsize": float(first_span["size"]) if first_span else 11.0,
-                    "fontname": self._map_span_font_to_base14(str(first_span["font"])) if first_span else "helv",
-                    "color": self._color_tuple_from_int(first_span["color"]) if first_span else (0,0,0),
-                    "continuation_x": cont_x
+                    "fontsize": fs,
+                    "fontname": self._map_span_font_to_base14(str(block_spans[0].get("font", "helv"))) if block_spans else "helv",
+                    "color": self._color_tuple_from_int(block_spans[0].get("color", 0)) if block_spans else (0,0,0),
+                    "continuation_x": cont_x,
+                    "same_paragraph": is_same_para,
+                    "original_gap": float(curr_gap),
+                    "original_baseline_height": original_lh
                 })
+                # Update prev_block_baseline to the LAST line of THIS block
+                last_line = block["lines"][-1] if block.get("lines") else None
+                prev_block_baseline = last_line["spans"][0]["origin"][1] if last_line and last_line.get("spans") else bbox[3]
+                last_block_text = block_text
 
             # ACTUALLY APPLY REDACTIONS TO CLEAR THE PAGE
             page.apply_redactions(images=0, graphics=0)
             
         # Process starting page
-        process_page(pdf_doc[start_page_idx], y_threshold, x_threshold)
+        process_page(pdf_doc[start_page_idx], y_threshold, x_threshold, is_first_page=True)
 
         # Process subsequent pages
         for p_idx in range(start_page_idx + 1, len(pdf_doc)):
-            process_page(pdf_doc[p_idx], 0)
+            process_page(pdf_doc[p_idx], 0, is_first_page=False)
             
         return captured_blocks
 
@@ -249,7 +291,8 @@ class ToolExecutor:
         fontsize: float = 11,
         fontname: str = "helv",
         color: tuple[float, float, float] = (0, 0, 0),
-        preserve_line_baseline: bool = False,
+        line_height_override: float | None = None,
+        paragraph_gap_override: float | None = None,
     ) -> int:
         """One-Pass Global Replacement: Prevents recursive duplication and scrambling."""
         replacements = 0
@@ -262,7 +305,12 @@ class ToolExecutor:
                 p += 1
                 continue
             
-            # 1. Redact ALL matches on this page FIRST to avoid recursive loops
+            # 1. Detect spacing ONLY if not overridden
+            lh, pg = self._infer_vertical_rhythm(page, fontsize)
+            active_lh = line_height_override if line_height_override is not None else lh
+            active_pg = paragraph_gap_override if paragraph_gap_override is not None else pg
+
+            # 2. Redact ALL matches on this page FIRST to avoid recursive loops
             for m_rects in matches:
                 for r in m_rects:
                     page.add_redact_annot(r, fill=(1, 1, 1))
@@ -271,7 +319,23 @@ class ToolExecutor:
             # 2. Capture the rest of the document below the FIRST match
             first_match_rect = matches[0][0] # First word of first match
             # Capture everything below y_threshold. If multi-line, use the bottom of the first word.
-            captured_blocks = self._capture_rest_of_document_data(pdf_doc, p, first_match_rect.y1, first_match_rect.x1)
+            # SURGICAL ANCHORING: Find the exact baseline of the LAST line of the match
+            # This prevents us from re-capturing the bottom of a multi-line anchor block.
+            anchor_line_data = self._find_line_for_rect(page, first_match_rect)
+            if anchor_line_data:
+                anchor_threshold_y = anchor_line_data[0].y1 # Bottom of the specific line
+                baseline_ref_y = anchor_line_data[1] # Actual font origin
+            else:
+                anchor_threshold_y = first_match_rect.y1
+                baseline_ref_y = first_match_rect.y1 - (active_lh * 0.2) # Guess origin 
+            
+            # Use EXACT baseline as gap reference to preserve original spacing.
+            captured_blocks = self._capture_rest_of_document_data(
+                pdf_doc=pdf_doc,
+                start_page_idx=p,
+                y_threshold=anchor_threshold_y,
+                gap_reference_y=baseline_ref_y
+            )
             
             # 3. Apply global string replacement to the text within captured blocks
             for block in captured_blocks:
@@ -285,7 +349,7 @@ class ToolExecutor:
             else:
                 start_pt = fitz.Point(first_match_rect.x0, first_match_rect.y1 - 1.0)
             
-            res = self._insert_wrapped_text_ext(
+            res = self._insert_wrapped_text(
                 pdf_doc=pdf_doc,
                 start_page=page,
                 start_point=start_pt,
@@ -295,6 +359,8 @@ class ToolExecutor:
                 color=color,
                 avoid_overlay=False,
                 respect_start_y=True,
+                line_height_override=active_lh,
+                paragraph_gap_override=active_pg,
                 continuation_x=first_match_rect.x0
             )
             
@@ -310,10 +376,28 @@ class ToolExecutor:
                         if not new_text.endswith((' ', '\n')) and not block["text"].startswith((' ', '\n')):
                             block["text"] = " " + block["text"]
                 else:
-                    start_pt = fitz.Point(block["x0"], res.final_point.y + (block_line_h * 1.4))
+                    # MATHEMATICAL IDENTITY: Use exact detected median leading (active_lh).
+                    # Only apply descent-aware padding for significant font size increases.
+                    gap_lh = active_lh
+                    if block["fontsize"] > fontsize * 1.2: # Use `fontsize` from `_replace_text` for comparison
+                        safe_dist = (fontsize * 0.25) + (block["fontsize"] * 0.85)
+                        gap_lh = max(active_lh, safe_dist)
+                    
+                    # PRECISION RHYTHM: Prioritize the exact captured gap from the original document
+                    # If same_paragraph, use standard leading; otherwise use the original gap (or median fallback).
+                    if block.get("same_paragraph"):
+                        gap = gap_lh
+                        target_x = captured_blocks[i-1].get("continuation_x", block["x0"]) if i > 0 else block["x0"]
+                    else:
+                        # MATHEMATICAL IDENTITY: Trust the original captured gap exactly.
+                        orig_gap = block.get("original_gap", 0)
+                        gap = orig_gap if orig_gap > 0 else active_pg
+                        target_x = block["x0"]
+
+                    start_pt = fitz.Point(target_x, res.final_point.y + gap)
                     resp_y = True
 
-                block_res = self._insert_wrapped_text_ext(
+                block_res = self._insert_wrapped_text(
                     pdf_doc=pdf_doc,
                     start_page=current_page,
                     start_point=start_pt,
@@ -323,7 +407,8 @@ class ToolExecutor:
                     color=block["color"],
                     avoid_overlay=False,
                     respect_start_y=resp_y,
-                    line_height_override=block_line_h,
+                    line_height_override=block.get("original_baseline_height"),
+                    paragraph_gap_override=active_pg,
                     right_limit_x=block["x1"],
                     continuation_x=block.get("continuation_x", block["x0"])
                 )
@@ -383,6 +468,7 @@ class ToolExecutor:
                     color=color,
                     avoid_overlay=False,
                     respect_start_y=True,
+                    right_limit_x=line_rect.x1 if line_info else None, # Use line_rect.x1 if line_info is available
                 )
                 modifications += 1
             
@@ -392,7 +478,10 @@ class ToolExecutor:
 
     @staticmethod
     def _line_height(fontsize: float) -> float:
-        return max(12.0, fontsize * 1.0)
+        """Returns the default line height for a given font size.
+        v29.0: Tightened factor to 1.1x for professional document rhythm.
+        """
+        return fontsize * 1.1
 
     @staticmethod
     def _wrap_text_to_width(text: str, fontname: str, fontsize: float, max_width: float) -> list[str]:
@@ -429,6 +518,7 @@ class ToolExecutor:
             self.final_point = final_point
             self.ended_with_newline = ended_with_newline
 
+
     def _insert_wrapped_text(
         self,
         pdf_doc: fitz.Document,
@@ -441,28 +531,7 @@ class ToolExecutor:
         avoid_overlay: bool = False,
         respect_start_y: bool = False,
         line_height_override: float | None = None,
-        right_limit_x: float | None = None,
-        continuation_x: float | None = None,
-    ) -> str:
-        # Wrapper for backward compatibility
-        result = self._insert_wrapped_text_ext(
-            pdf_doc, start_page, start_point, text, fontsize, fontname, color,
-            avoid_overlay, respect_start_y, line_height_override, right_limit_x, continuation_x
-        )
-        return result.overflow
-
-    def _insert_wrapped_text_ext(
-        self,
-        pdf_doc: fitz.Document,
-        start_page: fitz.Page,
-        start_point: fitz.Point,
-        text: str,
-        fontsize: float,
-        fontname: str,
-        color: tuple[float, float, float],
-        avoid_overlay: bool = False,
-        respect_start_y: bool = False,
-        line_height_override: float | None = None,
+        paragraph_gap_override: float | None = None,
         right_limit_x: float | None = None,
         continuation_x: float | None = None,
     ) -> WrappedTextResult:
@@ -484,8 +553,8 @@ class ToolExecutor:
         for p_idx, p_text in enumerate(paragraphs):
             p_clean = p_text.strip()
             if not p_clean:
-                # Actual empty line / paragraph gap
-                y += line_height * 1.4
+                # Default to a tight paragraph gap if not detected
+                y += paragraph_gap_override if paragraph_gap_override is not None else (line_height * 1.1)
                 curr_x = continuation_x if continuation_x is not None else margin
                 last_y = y
                 last_x = curr_x
@@ -533,9 +602,8 @@ class ToolExecutor:
                 last_y = y
                 last_x = curr_x + fitz.get_text_length(line_str, fontname=fontname, fontsize=fontsize)
                 
-            # Move to next line for start of next paragraph
             if p_idx < len(paragraphs) - 1:
-                y += line_height * 1.4
+                y += paragraph_gap_override if paragraph_gap_override is not None else (line_height * 1.1)
                 curr_x = continuation_x if continuation_x is not None else margin
                 last_y = y
                 last_x = curr_x
@@ -571,14 +639,14 @@ class ToolExecutor:
 
     @staticmethod
     def _infer_font_size_from_reference(pdf_doc: fitz.Document, reference_text: str) -> float | None:
-
+        """Estimates font size by searching for reference text and measuring its height."""
         for page in pdf_doc:
-            rects = page.search_for(token)
+            rects = page.search_for(reference_text)
             if rects:
-                estimated = rects[0].height * 0.9
+                # Use height of the first found rect as a proxy for font size
+                estimated = rects[0].height * 0.9 
                 if estimated > 0:
                     return float(estimated)
-
         return None
 
     @staticmethod
@@ -604,6 +672,8 @@ class ToolExecutor:
                 return "coit"
             return "cour"
 
+        if is_bold and is_italic:
+            return "hebi"
         if is_bold:
             return "hebo"
         if is_italic:
@@ -678,61 +748,129 @@ class ToolExecutor:
                         left_values.append(line_bbox_tuple[0])
                         right_values.append(line_bbox_tuple[2])
 
-        fontsize = primary_fontsize
-
-        if not last_span:
-            return None
-
-        size = last_span.get("size")
-        if size_values:
-            fontsize = float(statistics.median(size_values))
-        else:
-            fontsize = float(size) if isinstance(size, (int, float)) else 11.0
-        fontname = self._map_span_font_to_base14(str(last_span.get("font", "")))
-
-        if inter_line_distances:
-            # Use the median of observed line-to-line distances for accurate leading
-            line_height = float(statistics.median(inter_line_distances))
-        elif line_bboxes:
-            # Fallback to bbox height with a 1.2x multiplier if single line
-            median_bbox_height = float(statistics.median([b[3]-b[1] for b in line_bboxes]))
-            line_height = max(self._line_height(fontsize), median_bbox_height * 1.2)
-        else:
-            line_height = self._line_height(fontsize)
-
-        left_x = float(statistics.median(left_values)) if left_values else 36.0
-        right_x = float(statistics.median(right_values)) if right_values else page.rect.width - 36.0
-        if right_x - left_x < 120:
-            left_x = 36.0
-            right_x = page.rect.width - 36.0
-
-        return {
-            "fontsize": fontsize,
+        # Pass 3: Finalize and Delegate Rhythm Detection
+        primary_style = {
+            "fontsize": primary_fontsize,
             "fontname": fontname,
-            "line_height": line_height,
-            "left_x": left_x,
-            "right_x": right_x,
+            "left_x": float(statistics.median(left_values)) if left_values else 36.0,
+            "right_x": float(statistics.median(right_values)) if right_values else page.rect.width - 36.0,
         }
+        
+        # Consolidation: Use the specialized rhythm engine instead of repeating logic here
+        lh, pg = self._infer_vertical_rhythm(page, primary_fontsize)
+        primary_style["line_height"] = lh
+        
+        if primary_style["right_x"] - primary_style["left_x"] < 120:
+            primary_style["left_x"] = 36.0
+            primary_style["right_x"] = page.rect.width - 36.0
+
+        return primary_style
+
+    def _infer_vertical_rhythm(self, page: fitz.Page, fontsize: float) -> tuple[float, float]:
+        """Detects (line_height, paragraph_gap) from page content using clustering.
+        v30.0: The Baseline Revolution. Uses font origins for absolute precision.
+        """
+        text_dict = page.get_text("dict")
+        baseline_distances: list[float] = []
+        all_distances: list[float] = []
+        
+        # 1. Collect absolute baseline-to-baseline distances
+        prev_baseline_y = None
+        blocks = sorted(text_dict.get("blocks", []), key=lambda b: b["bbox"][1])
+        
+        for block in blocks:
+            if block.get("type") != 0: continue
+            for line in block.get("lines", []):
+                # Use span origin for true baseline (not bbox bottom)
+                spans = line.get("spans", [])
+                if not spans: continue
+                
+                curr_baseline_y = spans[0]["origin"][1]
+                
+                if prev_baseline_y is not None:
+                    dist = curr_baseline_y - prev_baseline_y
+                    # Valid distances: 0.5x to 8.0x font size
+                    if 0.5 * fontsize < dist < 8.0 * fontsize:
+                        all_distances.append(round(dist, 2))
+                
+                prev_baseline_y = curr_baseline_y
+
+        if not all_distances:
+            lh = self._line_height(fontsize)
+            return lh, lh * 1.2
+
+        # 2. Extract Standard Leading (LH)
+        # We find the SMALLEST frequent peak that is > 0.8 * fontsize. 
+        # This is the true inter-line rhythm, ignoring paragraph gaps.
+        candidate_lhs = [d for d in all_distances if d > fontsize * 0.8]
+        if candidate_lhs:
+            counts = statistics.multimode(candidate_lhs)
+            lh = float(min(counts))
+        else:
+            lh = float(statistics.median(all_distances))
+
+        # 3. Extract Paragraph Gaps (PG)
+        # Look for gaps significantly larger than the detected leading
+        larger_gaps = [d for d in all_distances if d >= lh + 1.0] # 1pt precision
+        if larger_gaps:
+            pg = float(statistics.median(larger_gaps))
+        else:
+            pg = lh # Default to LH if no distinct gaps exist
+            
+        return lh, pg
+
+    def _extract_style_for_text(self, pdf_doc: fitz.Document, target_text: str) -> dict[str, Any]:
+        """Finds the actual font, size, and color of the target text in the document."""
+        for page in pdf_doc:
+            matches = self._find_all_matches_on_page(page, target_text)
+            if matches:
+                rect = matches[0][0]
+                text_dict = page.get_text("dict", clip=rect)
+                for block in text_dict.get("blocks", []):
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            if target_text.lower() in span.get("text", "").lower():
+                                return {
+                                    "fontsize": float(span["size"]),
+                                    "fontname": self._map_span_font_to_base14(str(span["font"])),
+                                    "color": self._color_tuple_from_int(span["color"]),
+                                }
+        # Default fallback
+        return {"fontsize": 11.0, "fontname": "helv", "color": (0, 0, 0)}
 
     @staticmethod
     def _find_line_for_rect(page: fitz.Page, rect: fitz.Rect) -> tuple[fitz.Rect, float] | None:
+        """Finds the precise line rectangle and mathematical baseline for a given rect."""
         text_dict = page.get_text("dict")
         for block in text_dict.get("blocks", []):
+            if block.get("type") != 0: continue
             for line in block.get("lines", []):
                 bbox = line.get("bbox")
-                if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-                    continue
-
                 line_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+                
+                # Check if this line contains or intersects the target rect
                 if not line_rect.intersects(rect):
                     continue
 
+                span_origins = []
                 span_bottoms = []
                 for span in line.get("spans", []):
+                    # Use 'origin' for mathematical baseline
+                    origin = span.get("origin")
+                    if isinstance(origin, (list, tuple)) and len(origin) == 2:
+                        span_origins.append(float(origin[1]))
+                    
                     span_bbox = span.get("bbox")
                     if isinstance(span_bbox, (list, tuple)) and len(span_bbox) == 4:
                         span_bottoms.append(float(span_bbox[3]))
-                baseline_y = (max(span_bottoms) - 1.0) if span_bottoms else (line_rect.y1 - 1.0)
+                
+                # Preferred: Actual mathematical baseline from 'origin'
+                if span_origins:
+                    baseline_y = statistics.median(span_origins)
+                else:
+                    # Fallback to bottom of spans minus a small offset
+                    baseline_y = (max(span_bottoms) - 1.0) if span_bottoms else (line_rect.y1 - 1.0)
+                    
                 return (line_rect, baseline_y)
         return None
 
@@ -769,26 +907,6 @@ class ToolExecutor:
                 return (float(bbox[0]), float(bbox[0]), block_rect)
         return (best_first_x, best_block_x, None)
 
-    def _find_line_for_rect(
-        self, page: fitz.Page, rect: fitz.Rect
-    ) -> tuple[fitz.Rect, float] | None:
-        text_dict = page.get_text("dict")
-        for block in text_dict.get("blocks", []):
-            for line in block.get("lines", []):
-                bbox = line.get("bbox")
-                line_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
-                # Intersect or contain
-                if not (line_rect.y0 <= rect.y1 and line_rect.y1 >= rect.y0):
-                    continue
-                
-                span_bottoms = []
-                for span in line.get("spans", []):
-                    span_bbox = span.get("bbox")
-                    if isinstance(span_bbox, (list, tuple)) and len(span_bbox) == 4:
-                        span_bottoms.append(float(span_bbox[3]))
-                baseline_y = (max(span_bottoms) - 1.0) if span_bottoms else (line_rect.y1 - 1.0)
-                return (line_rect, baseline_y)
-        return None
 
     def _insert_paragraph_below_anchor(
         self,
@@ -819,9 +937,9 @@ class ToolExecutor:
             line_info = self._find_line_for_rect(page, anchor_rect)
             anchor_line_bottom = line_info[0].y1 if line_info else anchor_rect.y1
             
-        # Use a paragraph spacing that feels natural (usually 1.4x the line height)
-        paragraph_spacing = resolved_line_height * 1.4
-        start_y = anchor_line_bottom + paragraph_spacing
+        # Use clustered rhythm spacing instead of hardcoded 1.4x
+        lh, pg = self._infer_vertical_rhythm(page, resolved_fontsize)
+        start_y = anchor_line_bottom + pg
 
         bottom_limit = page.rect.height - margin
         lines_fit = int(max(0.0, (bottom_limit - start_y)) / max(1.0, resolved_line_height))
@@ -836,13 +954,19 @@ class ToolExecutor:
         # 1. Capture structured blocks
         # PURE VERTICAL SPLIT: Set x_threshold=None to capture full lines below the anchor.
         # Add a strict safety offset (+4.0) to ensure we don't accidentally capture the last line of the anchor itself.
-        captured_blocks = self._capture_rest_of_document_data(pdf_doc, page.number, anchor_line_bottom + 4.0, None)
+        # But use anchor_line_bottom as the gap reference for accurate rhythm extraction.
+        captured_blocks = self._capture_rest_of_document_data(
+            pdf_doc, page.number, 
+            y_threshold=anchor_line_bottom + 4.0, 
+            x_threshold=None,
+            gap_reference_y=anchor_line_bottom
+        )
 
         left_x = max(margin, min(left_x, page.rect.width - margin - 80))
         right_x = max(left_x + 80, min(right_x, page.rect.width - margin))
         # 2. Insert new paragraph (Inherit indentation from anchor)
         # Use anchor's x0 as the margin/continuation_x to preserve document layout
-        res = self._insert_wrapped_text_ext(
+        res = self._insert_wrapped_text(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=self._clamp_start_point(page, fitz.Point(left_x, start_y), resolved_fontsize),
@@ -860,13 +984,23 @@ class ToolExecutor:
         # Reflow subsequent blocks
         curr_pg = res.final_page
         for i, block in enumerate(captured_blocks):
-            block_line_h = self._line_height(block["fontsize"])
-            
             # TAIL STITCHING: If it's a tail of the current paragraph, 
             # insert it with NO gap (spacing=0).
-            spacing = 0 if block.get("is_tail") else (block_line_h * 1.5)
+            if block.get("is_tail"):
+                spacing = 0
+            else:
+                # Use PRECISION CAPTURE: Prioritize the original gap height
+                blk_lh, blk_pg = self._infer_vertical_rhythm(curr_pg, block["fontsize"])
+                orig_gap = block.get("original_gap", 0)
+                
+                if block.get("same_paragraph"):
+                    # Use strictly anchored leading
+                    spacing = blk_lh
+                else:
+                    # MATHEMATICAL IDENTITY: Trust the original captured gap exactly.
+                    spacing = orig_gap if orig_gap > 0 else blk_pg
             
-            block_res = self._insert_wrapped_text_ext(
+            block_res = self._insert_wrapped_text(
                 pdf_doc=pdf_doc,
                 start_page=curr_pg,
                 start_point=fitz.Point(block["x0"], res.final_point.y + spacing),
@@ -876,7 +1010,7 @@ class ToolExecutor:
                 color=block["color"],
                 avoid_overlay=False,
                 respect_start_y=True,
-                line_height_override=block_line_h,
+                line_height_override=block.get("original_baseline_height"),
                 right_limit_x=block["x1"],
                 continuation_x=block.get("continuation_x", block["x0"])
             )
@@ -897,7 +1031,7 @@ class ToolExecutor:
 
         margin = 36.0
         page = pdf_doc.new_page()
-        overflow = self._insert_wrapped_text(
+        res = self._insert_wrapped_text(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=fitz.Point(margin, margin + self._line_height(fontsize)),
@@ -905,9 +1039,11 @@ class ToolExecutor:
             fontsize=fontsize,
             fontname=fontname,
             color=color,
+            avoid_overlay=False, # Default to False for new pages
+            respect_start_y=True, # Always respect start_y for new pages
         )
-        if overflow:
-            self._append_text_to_new_pages(pdf_doc, overflow, fontsize, fontname, color)
+        if res.overflow:
+            self._append_text_to_new_pages(pdf_doc, res.overflow, fontsize, fontname, color)
 
     @staticmethod
     def _resolve_non_overlapping_y(
@@ -987,7 +1123,7 @@ class ToolExecutor:
         right_x = max(left_x + 80, min(right_x, page.rect.width - margin))
 
         start_point = self._clamp_start_point(page, fitz.Point(left_x, start_y), resolved_fontsize)
-        overflow = self._insert_wrapped_text(
+        res = self._insert_wrapped_text(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=start_point,
@@ -996,12 +1132,13 @@ class ToolExecutor:
             fontname=resolved_fontname,
             color=color,
             avoid_overlay=True,
+            respect_start_y=True, # Always respect start_y for append
             line_height_override=resolved_line_height,
             right_limit_x=right_x,
             continuation_x=left_x,
         )
-        if overflow:
-            self._append_text_to_new_pages(pdf_doc, overflow, resolved_fontsize, resolved_fontname, color)
+        if res.overflow:
+            self._append_text_to_new_pages(pdf_doc, res.overflow, resolved_fontsize, resolved_fontname, color)
 
     @staticmethod
     def _first_non_empty_string(*values: Any) -> str:
@@ -1295,9 +1432,25 @@ class ToolExecutor:
                         right_limit = block_rect.x1 if block_rect else page.rect.width - 36.0
                         
                         # Capture rest of document starting from the REDACTED anchor's end
-                        captured_blocks = self._capture_rest_of_document_data(pdf_doc, page.number, full_match_rect.y1, full_match_rect.x1)
+                        # SURGICAL ANCHORING: Find exact line baseline for the anchor
+                        # Use the resolved_fontsize to estimate active_lh if not explicitly overridden
+                        active_lh = self._line_height(resolved_fontsize)
+                        line_data = self._find_line_for_rect(page, full_match_rect)
+                        if line_data:
+                            anchor_threshold_y = line_data[0].y1
+                            baseline_ref_y = line_data[1]
+                        else:
+                            anchor_threshold_y = full_match_rect.y1
+                            baseline_ref_y = full_match_rect.y1 - (active_lh * 0.2)
+
+                        captured_blocks = self._capture_rest_of_document_data(
+                            pdf_doc=pdf_doc,
+                            start_page_idx=page.number,
+                            y_threshold=anchor_threshold_y,
+                            gap_reference_y=baseline_ref_y
+                        )
                         
-                        res = self._insert_wrapped_text_ext(
+                        res = self._insert_wrapped_text(
                             pdf_doc=pdf_doc,
                             start_page=page,
                             start_point=start_pt,
@@ -1313,9 +1466,18 @@ class ToolExecutor:
                         curr_pg = res.final_page
                         prev_res = res
                         for idx, blk in enumerate(captured_blocks):
-                            blk_line_h = self._line_height(blk["fontsize"])
-                            start_pt = prev_res.final_point if (idx == 0 and blk.get("is_tail")) else fitz.Point(blk["x0"], prev_res.final_point.y + (blk_line_h * 1.4))
-                            blk_res = self._insert_wrapped_text_ext(
+                            # Use inferred rhythm instead of hardcoded 1.4x
+                            lh, pg = self._infer_vertical_rhythm(curr_pg, blk["fontsize"])
+                            
+                            if idx == 0 and blk.get("is_tail"):
+                                spacing = 0
+                            else:
+                                # Use PRECISION CAPTURE: Prioritize original gap
+                                orig_gap = blk.get("original_gap", 0)
+                                spacing = lh if blk.get("same_paragraph") else max(pg, orig_gap)
+
+                            start_pt = fitz.Point(blk["x0"], prev_res.final_point.y + spacing)
+                            blk_res = self._insert_wrapped_text(
                                 pdf_doc=pdf_doc,
                                 start_page=curr_pg,
                                 start_point=start_pt,
@@ -1324,7 +1486,7 @@ class ToolExecutor:
                                 fontname=blk["fontname"],
                                 color=blk["color"],
                                 respect_start_y=True,
-                                line_height_override=blk_line_h,
+                                line_height_override=lh,
                                 continuation_x=blk.get("continuation_x", blk["x0"])
                             )
                             curr_pg = blk_res.final_page
@@ -1346,7 +1508,7 @@ class ToolExecutor:
                 page = pdf_doc[page_number - 1]
                 raw_point = fitz.Point(float(args.get("x", 72)), float(args.get("y", 72)))
                 start_point = self._clamp_start_point(page, raw_point, fontsize or 11.0)
-                overflow = self._insert_wrapped_text(
+                res = self._insert_wrapped_text(
                     pdf_doc=pdf_doc,
                     start_page=page,
                     start_point=start_point,
@@ -1355,11 +1517,12 @@ class ToolExecutor:
                     fontname=fontname or "helv",
                     color=color,
                     avoid_overlay=True,
+                    respect_start_y=True,
                 )
-                if overflow:
+                if res.overflow:
                     self._append_text_to_new_pages(
                         pdf_doc=pdf_doc,
-                        text=overflow,
+                        text=res.overflow,
                         fontsize=fontsize or 11.0,
                         fontname=fontname or "helv",
                         color=color,
@@ -1379,6 +1542,10 @@ class ToolExecutor:
         elif tool_name in {"change_font_size", "change_font_type", "change_font_color", "set_text_style", "convert_case"}:
             target_text = str(args.get("target_text", ""))
             transformed = target_text
+            
+            # PROPERTY INHERITANCE: Look at the document to find current style
+            existing_style = self._extract_style_for_text(pdf_doc, target_text)
+            
             if tool_name == "convert_case":
                 case_mode = str(args.get("case", "lower"))
                 if case_mode == "upper":
@@ -1395,36 +1562,73 @@ class ToolExecutor:
                     pdf_doc,
                     str(args.get("reference_text", "")),
                 )
-            font_size = float(raw_font_size if raw_font_size is not None else (inferred_font_size or 11))
-            font_name = str(args.get("font_family", "helv"))
-            color = self._color_tuple(str(args.get("color", "black")))
+            
+            # Use inherited fontsize as the ultimate fallback instead of 11.0
+            font_size = float(raw_font_size if raw_font_size is not None else (inferred_font_size or existing_style["fontsize"]))
+            font_name = str(args.get("font_family", existing_style["fontname"]))
+            
+            # Inheritance for color
+            raw_color = args.get("color")
+            if raw_color:
+                color = self._color_tuple(str(raw_color))
+            else:
+                color = existing_style["color"]
 
-            if tool_name == "change_font_size" and raw_font_size is None and inferred_font_size is None:
-                return ToolExecutionResult(
-                    {
-                        "tool": tool_name,
-                        "status": "failed",
-                        "success": False,
-                        "output": {},
-                        "error": "Missing 'font_size'. Provide a number or reference_text (e.g. same as word X).",
-                    }
-                )
+            if tool_name == "change_font_size" and raw_font_size is None and inferred_font_size is None and "font_size" not in args:
+                # If explicit change requested but no value, that's an error. 
+                # But if it's another tool, it's fine to inherit.
+                pass 
 
             if tool_name == "set_text_style":
                 style = str(args.get("style", ""))
-                if style == "bold":
+                curr_font = existing_style["fontname"]
+                
+                # ADDITIVE STYLING: Combine existing style with new request
+                is_currently_bold = curr_font in ["hebo", "hebi", "tibo", "cobo"]
+                is_currently_italic = curr_font in ["heit", "hebi", "tiit", "coit"]
+                
+                target_bold = is_currently_bold or (style == "bold")
+                target_italic = is_currently_italic or (style == "italic")
+                
+                if target_bold and target_italic:
+                    font_name = "hebi"
+                elif target_bold:
                     font_name = "hebo"
-                elif style == "italic":
+                elif target_italic:
                     font_name = "heit"
+                else:
+                    font_name = "helv"
 
-            changed = self._modify_text_inline(
-                pdf_doc=pdf_doc,
-                old_text=target_text,
-                new_text=transformed,
-                fontsize=font_size,
-                fontname=font_name,
-                color=color,
-            )
+            # PATH SPLIT: High-impact geometry changes (Size, Font, Case, Style) 
+            # These can all increase text width (e.g. Bold or ALL CAPS)
+            # MUST use the Reflow Engine (_replace_text) to push subsequent text.
+            if tool_name in {"change_font_size", "change_font_type", "convert_case", "set_text_style"}:
+                # METRIC LOCKING: Infer rhythm from the ORIGINAL text's style
+                # This ensures document vertical rhythm is the anchor, even if new_text is size 33.
+                try:
+                    active_lh, active_pg = self._infer_vertical_rhythm(pdf_doc[0], existing_style["fontsize"])
+                except Exception:
+                    active_lh, active_pg = None, None
+
+                changed = self._replace_text(
+                    pdf_doc,
+                    old_text=target_text,
+                    new_text=transformed,
+                    fontsize=font_size,
+                    fontname=font_name,
+                    color=color,
+                    line_height_override=active_lh,
+                    paragraph_gap_override=active_pg,
+                )
+            else:
+                changed = self._modify_text_inline(
+                    pdf_doc=pdf_doc,
+                    old_text=target_text,
+                    new_text=transformed,
+                    fontsize=font_size,
+                    fontname=font_name,
+                    color=color,
+                )
         elif tool_name in {"highlight_text", "underline_text", "strikethrough_text"}:
             target_text = str(args.get("target_text", ""))
             for page in pdf_doc:
