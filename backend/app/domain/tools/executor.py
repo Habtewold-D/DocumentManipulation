@@ -79,6 +79,38 @@ class ToolExecutor:
                 return rects
         return []
 
+    def _find_all_matches_on_page(self, page: fitz.Page, text: str) -> list[list[fitz.Rect]]:
+        """Finds all occurrences of text on page, supporting multi-line word sequences."""
+        if not text.strip():
+            return []
+        
+        target_words = text.split()
+        if not target_words:
+            return []
+        
+        # We use words to handle cross-line matches precisely
+        page_words = page.get_text("words")  # (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+        matches = []
+        
+        i = 0
+        while i <= len(page_words) - len(target_words):
+            match = True
+            for j in range(len(target_words)):
+                page_word = page_words[i + j][4].lower().strip(".,!?;:()[]'\"")
+                target_word = target_words[j].lower().strip(".,!?;:()[]'\"")
+                if page_word != target_word:
+                    match = False
+                    break
+            
+            if match:
+                match_rects = [fitz.Rect(page_words[i+j][:4]) for j in range(len(target_words))]
+                matches.append(match_rects)
+                i += len(target_words)  # Skip past this match
+            else:
+                i += 1
+                
+        return matches
+
     def _collect_and_clear_page_after(self, page: fitz.Page, y_threshold: float) -> str:
         """Collects all text below y_threshold and redacts it from the page."""
         blocks = page.get_text("blocks")
@@ -219,85 +251,66 @@ class ToolExecutor:
         color: tuple[float, float, float] = (0, 0, 0),
         preserve_line_baseline: bool = False,
     ) -> int:
+        """One-Pass Global Replacement: Prevents recursive duplication and scrambling."""
         replacements = 0
         p = 0
         while p < len(pdf_doc):
             page = pdf_doc[p]
-            rects = self._search_for_text_robust(page, old_text)
-            if not rects:
+            # Use the robust multi-match finder
+            matches = self._find_all_matches_on_page(page, old_text)
+            if not matches:
                 p += 1
                 continue
             
-            # Process the first rect. Shifting content will invalidate subsequent rects.
-            rect = rects[0]
-            
-            # 1. Capture rest of document using structured data
-            # Mid-line replacement: capture only text to the right of the anchor's end-X on the first line.
-            captured_blocks = self._capture_rest_of_document_data(pdf_doc, p, rect.y1, rect.x1)
-            
-            # 2. Redact target
-            page.add_redact_annot(rect, fill=(1, 1, 1))
+            # 1. Redact ALL matches on this page FIRST to avoid recursive loops
+            for m_rects in matches:
+                for r in m_rects:
+                    page.add_redact_annot(r, fill=(1, 1, 1))
             page.apply_redactions()
             
-            # 3. Insert new text
-            raw_new_text = new_text.strip()
-            line_info = self._find_line_for_rect(page, rect)
-            line_h = self._line_height(fontsize)
-
+            # 2. Capture the rest of the document below the FIRST match
+            first_match_rect = matches[0][0] # First word of first match
+            # Capture everything below y_threshold. If multi-line, use the bottom of the first word.
+            captured_blocks = self._capture_rest_of_document_data(pdf_doc, p, first_match_rect.y1, first_match_rect.x1)
+            
+            # 3. Apply global string replacement to the text within captured blocks
+            for block in captured_blocks:
+                block["text"] = block["text"].replace(old_text, new_text)
+            
+            # 4. Insert the new_text for the FIRST match
+            line_info = self._find_line_for_rect(page, first_match_rect)
             if line_info:
                 line_rect, baseline_y = line_info
-                # Start exactly where the old text was
-                start_point = fitz.Point(rect.x0, baseline_y)
-                respect_start_y = True
-                
-                # Base margin for wrapped lines should be the block's margin,
-                # not necessarily the current line's x0 (which might be an indent).
-                continuation_x = line_rect.x0
-                text_dict = page.get_text("dict")
-                for block in text_dict.get("blocks", []):
-                    if fitz.Rect(block["bbox"]).intersects(rect):
-                        if len(block.get("lines", [])) > 1:
-                            continuation_x = float(block["lines"][1]["bbox"][0])
-                        else:
-                            continuation_x = float(block["bbox"][0])
-                        break
+                start_pt = fitz.Point(first_match_rect.x0, baseline_y)
             else:
-                baseline_y = rect.y1 - 1 if preserve_line_baseline else max(36, rect.y0 + fontsize)
-                start_point = fitz.Point(rect.x0, baseline_y)
-                respect_start_y = preserve_line_baseline
-                continuation_x = rect.x0
-
+                start_pt = fitz.Point(first_match_rect.x0, first_match_rect.y1 - 1.0)
+            
             res = self._insert_wrapped_text_ext(
                 pdf_doc=pdf_doc,
                 start_page=page,
-                start_point=start_point,
+                start_point=start_pt,
                 text=new_text,
                 fontsize=fontsize,
                 fontname=fontname,
                 color=color,
                 avoid_overlay=False,
-                respect_start_y=respect_start_y,
-                continuation_x=continuation_x
+                respect_start_y=True,
+                continuation_x=first_match_rect.x0
             )
             
-            # 4. Progressively reflow all captured structured blocks
+            # 5. Progressively reflow all captured structured blocks
             current_page = res.final_page
-            
             for i, block in enumerate(captured_blocks):
                 block_line_h = self._line_height(block["fontsize"])
                 
-                # Logic: Only a captured 'tail' (mid-line continuation) can follow on the SAME line.
-                # Everything else MUST start a new paragraph.
                 if i == 0 and block.get("is_tail"):
                     start_pt = res.final_point
                     resp_y = True
-                    # If we are continuing on the SAME line, add a joining space
                     if not res.ended_with_newline:
                         if not new_text.endswith((' ', '\n')) and not block["text"].startswith((' ', '\n')):
                             block["text"] = " " + block["text"]
                 else:
-                    # Subsequent blocks or non-tails start with a paragraph gap
-                    start_pt = fitz.Point(block["x0"], res.final_point.y + (block_line_h * 1.5))
+                    start_pt = fitz.Point(block["x0"], res.final_point.y + (block_line_h * 1.4))
                     resp_y = True
 
                 block_res = self._insert_wrapped_text_ext(
@@ -315,16 +328,71 @@ class ToolExecutor:
                     continuation_x=block.get("continuation_x", block["x0"])
                 )
                 current_page = block_res.final_page
-                res = block_res # Update reference for next gap
+                res = block_res
             
-            replacements += 1
-            continue 
+            # Advance pointer past processed pages
+            p = current_page.number + 1
+            replacements += len(matches)
             
         return replacements
 
+    def _modify_text_inline(
+        self,
+        pdf_doc: fitz.Document,
+        old_text: str,
+        new_text: str,
+        fontsize: float,
+        fontname: str,
+        color: tuple[float, float, float],
+    ) -> int:
+        """Applies style or casing changes in-place without reflowing the document."""
+        modifications = 0
+        p = 0
+        while p < len(pdf_doc):
+            page = pdf_doc[p]
+            matches = self._find_all_matches_on_page(page, old_text)
+            if not matches:
+                p += 1
+                continue
+            
+            # Find all target rects on this page
+            for m_rects in matches:
+                # 1. Capture the exact line geometry to preserve baseline
+                rect = m_rects[-1]
+                line_info = self._find_line_for_rect(page, rect)
+                if line_info:
+                    line_rect, baseline_y = line_info
+                    start_point = fitz.Point(m_rects[0].x0, baseline_y)
+                else:
+                    start_point = fitz.Point(m_rects[0].x0, rect.y1 - 1.0)
+                
+                # 2. Redact only the target words
+                for r in m_rects:
+                    page.add_redact_annot(r, fill=(1, 1, 1))
+                page.apply_redactions()
+                
+                # 3. Rewrite the transformed text strictly in the redacted space
+                # Using _insert_wrapped_text restricts to horizontal wrapping, preventing vertical shifts
+                self._insert_wrapped_text(
+                    pdf_doc=pdf_doc,
+                    start_page=page,
+                    start_point=start_point,
+                    text=new_text,
+                    fontsize=fontsize,
+                    fontname=fontname,
+                    color=color,
+                    avoid_overlay=False,
+                    respect_start_y=True,
+                )
+                modifications += 1
+            
+            p += 1
+            
+        return modifications
+
     @staticmethod
     def _line_height(fontsize: float) -> float:
-        return max(12.0, fontsize * 1.35)
+        return max(12.0, fontsize * 1.0)
 
     @staticmethod
     def _wrap_text_to_width(text: str, fontname: str, fontsize: float, max_width: float) -> list[str]:
@@ -417,7 +485,7 @@ class ToolExecutor:
             p_clean = p_text.strip()
             if not p_clean:
                 # Actual empty line / paragraph gap
-                y += line_height * 0.7
+                y += line_height * 1.4
                 curr_x = continuation_x if continuation_x is not None else margin
                 last_y = y
                 last_x = curr_x
@@ -467,7 +535,7 @@ class ToolExecutor:
                 
             # Move to next line for start of next paragraph
             if p_idx < len(paragraphs) - 1:
-                y += line_height
+                y += line_height * 1.4
                 curr_x = continuation_x if continuation_x is not None else margin
                 last_y = y
                 last_x = curr_x
@@ -751,8 +819,8 @@ class ToolExecutor:
             line_info = self._find_line_for_rect(page, anchor_rect)
             anchor_line_bottom = line_info[0].y1 if line_info else anchor_rect.y1
             
-        # Use a paragraph spacing that feels natural (usually 1.5x to 2x the line height)
-        paragraph_spacing = resolved_line_height * 1.5
+        # Use a paragraph spacing that feels natural (usually 1.4x the line height)
+        paragraph_spacing = resolved_line_height * 1.4
         start_y = anchor_line_bottom + paragraph_spacing
 
         bottom_limit = page.rect.height - margin
@@ -1246,7 +1314,7 @@ class ToolExecutor:
                         prev_res = res
                         for idx, blk in enumerate(captured_blocks):
                             blk_line_h = self._line_height(blk["fontsize"])
-                            start_pt = prev_res.final_point if (idx == 0 and blk.get("is_tail")) else fitz.Point(blk["x0"], prev_res.final_point.y + (blk_line_h * 1.5))
+                            start_pt = prev_res.final_point if (idx == 0 and blk.get("is_tail")) else fitz.Point(blk["x0"], prev_res.final_point.y + (blk_line_h * 1.4))
                             blk_res = self._insert_wrapped_text_ext(
                                 pdf_doc=pdf_doc,
                                 start_page=curr_pg,
@@ -1349,14 +1417,13 @@ class ToolExecutor:
                 elif style == "italic":
                     font_name = "heit"
 
-            changed = self._replace_text(
-                pdf_doc,
+            changed = self._modify_text_inline(
+                pdf_doc=pdf_doc,
                 old_text=target_text,
                 new_text=transformed,
                 fontsize=font_size,
                 fontname=font_name,
                 color=color,
-                preserve_line_baseline=tool_name in {"change_font_size", "set_text_style", "change_font_type", "change_font_color"},
             )
         elif tool_name in {"highlight_text", "underline_text", "strikethrough_text"}:
             target_text = str(args.get("target_text", ""))
