@@ -47,11 +47,6 @@ TOOL_REGISTRY: dict[str, ToolSchema] = {
         },
         output_schema={"success": "boolean", "replacements": "number", "version_id": "string"},
     ),
-    "change_font_type": ToolSchema(
-        name="change_font_type",
-        input_schema={"document_id": "string", "target_text": "string", "font_family": "string"},
-        output_schema={"success": "boolean", "version_id": "string"},
-    ),
     "change_font_size": ToolSchema(
         name="change_font_size",
         input_schema={

@@ -82,7 +82,6 @@ backend/
         replace_text.json
         add_text.json
         search_replace.json
-        change_font_type.json
         change_font_size.json
         change_font_color.json
         set_text_style.json
@@ -115,7 +114,6 @@ backend/
         replace_text.py
         add_text.py
         search_replace.py
-        change_font_type.py
         change_font_size.py
         change_font_color.py
         set_text_style.py

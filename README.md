@@ -14,10 +14,9 @@ These are structured as MCP tools with strict input/output schemas.
 - replace_text
 - add_text
 - search_replace
-- change_font_type
-- change_font_size
-- change_font_color
-- set_text_style (bold/italic)
+- `change_font_size`: Adjust text size.
+- `change_font_color`: Modify text color.
+_style (bold/italic)
 - convert_case
 - highlight_text
 - underline_text

@@ -31,7 +31,6 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
         return
 
     target_text_tools = {
-        "change_font_type",
         "change_font_size",
         "change_font_color",
         "set_text_style",

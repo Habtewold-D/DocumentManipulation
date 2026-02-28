@@ -18,6 +18,14 @@ def execute_tools(state: dict) -> dict:
         if current_asset_id and "source_asset_id" not in args:
             args["source_asset_id"] = current_asset_id
         result = executor.execute(tool_name, args)
+        
+        # v32.5: Stop execution and fail state if a tool fails.
+        if not result.get("success"):
+            state["executed_tools"] = executed_tools + [result]
+            state["status"] = "failed"
+            state["error"] = result.get("error", f"Tool {tool_name} failed")
+            return state
+
         output = result.get("output", {}) if isinstance(result, dict) else {}
         if isinstance(output, dict) and output.get("asset_id"):
             current_asset_id = output["asset_id"]
