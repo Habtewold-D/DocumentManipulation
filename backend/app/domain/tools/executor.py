@@ -111,7 +111,8 @@ class ToolExecutor:
                 for r in rects: full_match_rect |= r
                 
                 # Style & Geometry
-                line_info = self._find_line_for_rect(page, full_match_rect)
+                start_line_info = self._find_line_for_rect(page, rects[0])
+                end_line_info = self._find_line_for_rect(page, rects[-1])
                 first_line_x, block_x, block_rect = self._get_block_geometry(page, full_match_rect)
                 
                 # Extract style from dict
@@ -123,14 +124,14 @@ class ToolExecutor:
                     "page": page,
                     "rects": rects,
                     "full_match_rect": full_match_rect,
-                    "baseline_y": line_info[1] if line_info else (full_match_rect.y1 - 1.0),
+                    "baseline_y": start_line_info[1] if start_line_info else (rects[0].y1 - 1.0),
                     "first_line_x": first_line_x,
                     "block_x": block_x,
                     "block_rect": block_rect,
                     "fontsize": float(block_spans[0]["size"]),
                     "fontname": self._map_span_font_to_base14(str(block_spans[0].get("font", "helv"))),
                     "color": self._color_tuple_from_int(block_spans[0].get("color", 0)),
-                    "line_bottom": line_info[0].y1 if line_info else full_match_rect.y1,
+                    "line_bottom": end_line_info[0].y1 if end_line_info else rects[-1].y1,
                     "text": candidate
                 }
         return None
@@ -146,13 +147,14 @@ class ToolExecutor:
         """Unified 'Push-Down' reflow loop: Standardizes vertical rhythm across all tools."""
         curr_res = last_res
         for i, block in enumerate(captured_blocks):
-            # v31.6/v31.9 Bimodal & Semantic Rhythms
-            midpoint = (active_lh + active_pg) / 2
-            
+            original_gap = float(block.get("original_gap", 0) or 0)
+
             if block.get("is_tail"):
                 spacing = 0
-            elif block.get("same_paragraph") or (block.get("original_gap", 0) < midpoint):
+            elif block.get("same_paragraph"):
                 spacing = active_lh
+            elif original_gap > 0:
+                spacing = max(active_lh, original_gap)
             else:
                 spacing = active_pg
                 
@@ -471,23 +473,58 @@ class ToolExecutor:
         color: tuple[float, float, float] = (0, 0, 0),
         line_height_override: float | None = None,
         paragraph_gap_override: float | None = None,
+        preferred_page_number: int | None = None,
+        restrict_page_number: int | None = None,
     ) -> int:
         """Unified One-Pass Replacement: Standardized on Semantic Anchor and Push-Down Reflow."""
-        anchor = self._locate_semantic_anchor(pdf_doc, old_text)
+        anchor = self._locate_semantic_anchor(pdf_doc, old_text, preferred_page_number=preferred_page_number)
         if not anchor: return 0
+        if restrict_page_number is not None and anchor["page"].number + 1 != restrict_page_number:
+            return 0
         
         page = anchor["page"]
+
+        line_info = self._find_line_for_rect(page, anchor["rects"][-1])
+        if line_info:
+            line_rect, baseline_y = line_info
+        else:
+            line_rect = fitz.Rect(anchor["full_match_rect"])
+            baseline_y = anchor["baseline_y"]
+
+        words = page.get_text("words")
+        tail_tokens: list[tuple[float, str]] = []
+        tail_x0 = anchor["full_match_rect"].x1
+        line_y0 = line_rect.y0
+        line_y1 = line_rect.y1
+        for word in words:
+            wx0, wy0, _, wy1, wtext = word[:5]
+            if wy1 <= line_y0 or wy0 >= line_y1:
+                continue
+            if wx0 >= anchor["full_match_rect"].x1 - 0.5:
+                tail_tokens.append((float(wx0), str(wtext)))
+
+        tail_text = ""
+        if tail_tokens:
+            tail_tokens.sort(key=lambda item: item[0])
+            tail_text = " ".join(token for _, token in tail_tokens).strip()
+
+        payload = new_text
+        if tail_text:
+            if not payload.endswith(" ") and not tail_text.startswith(" "):
+                payload = f"{payload} {tail_text}"
+            else:
+                payload = f"{payload}{tail_text}"
         
-        # 1. CAPTURE subsequent blocks BEFORE redaction
+        # 1. CAPTURE subsequent blocks BELOW anchor using paragraph insertion strategy
         captured_blocks = self._capture_rest_of_document_data(
             pdf_doc, page.number, 
-            y_threshold=anchor["line_bottom"] + 0.5,
+            y_threshold=anchor["line_bottom"] + 2.0,
             gap_reference_y=anchor["baseline_y"]
         )
         
-        # 2. REDACT only the target anchor
-        for r in anchor["rects"]:
-            page.add_redact_annot(r, fill=(1, 1, 1))
+        # 2. REDACT from anchor start to end of line to avoid overlap, then reinsert with push-down
+        redact_rect = fitz.Rect(anchor["rects"][0].x0, line_rect.y0, line_rect.x1, line_rect.y1)
+        page.add_redact_annot(redact_rect, fill=(1, 1, 1))
         page.apply_redactions()
         
         # 3. RE-INSERT
@@ -495,12 +532,12 @@ class ToolExecutor:
         lh = line_height_override or lh
         pg = paragraph_gap_override or pg
         
-        start_pt = fitz.Point(anchor["rects"][0].x0, anchor["baseline_y"])
+        start_pt = fitz.Point(anchor["rects"][0].x0, baseline_y)
         res = self._insert_wrapped_text(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=start_pt,
-            text=new_text,
+            text=payload,
             fontsize=fontsize,
             fontname=fontname,
             color=color,
@@ -1163,14 +1200,29 @@ class ToolExecutor:
             color_raw = args.get("color")
             color = self._color_tuple(str(color_raw)) if color_raw else (anchor["color"] if anchor else (0, 0, 0))
 
-            changed = self._replace_text(
-                pdf_doc, 
-                old_text=old_text, 
-                new_text=new_text,
-                fontsize=fontsize,
-                fontname=fontname,
-                color=color
-            )
+            scope = str(args.get("scope", "all")).lower()
+            page_number_raw = args.get("page_number")
+            page_number = int(page_number_raw) if page_number_raw is not None else None
+
+            if not old_text or old_text == new_text:
+                changed = 0
+            else:
+                changed = 0
+                max_replacements = 200
+                for _ in range(max_replacements):
+                    replaced = self._replace_text(
+                        pdf_doc,
+                        old_text=old_text,
+                        new_text=new_text,
+                        fontsize=fontsize,
+                        fontname=fontname,
+                        color=color,
+                        preferred_page_number=page_number if scope == "page" else None,
+                        restrict_page_number=page_number if scope == "page" else None,
+                    )
+                    if replaced <= 0:
+                        break
+                    changed += replaced
         elif tool_name == "add_text":
             text = self._first_non_empty_string(args.get("text"), args.get("new_text"), args.get("content"), args.get("value"))
             if not text:
