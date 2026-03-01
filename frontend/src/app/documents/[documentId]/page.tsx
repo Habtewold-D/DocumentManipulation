@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useSyncExternalStore, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { FileText, Eye } from "lucide-react";
 import { useAuthGuard } from "@/lib/auth/auth-guard";
-import { getAccessToken, subscribeAuthToken } from "@/lib/auth/token-storage";
 import { useDocumentEditor } from "@/hooks/useDocumentEditor";
 import { useVersions } from "@/hooks/useVersions";
 import { useCommandRun } from "@/hooks/useCommandRun";
@@ -32,7 +31,6 @@ export default function DocumentEditorPage() {
   const { logs, fetchLogs } = useToolLogs(documentId);
   const { compareResult, loading: compareLoading, error: compareError, runCompare } = useCompare(documentId);
   const { tools, loading: toolsLoading, error: toolsError, fetchTools } = useToolsCatalog();
-  const accessToken = useSyncExternalStore(subscribeAuthToken, getAccessToken, () => null);
   const [previewMode, setPreviewMode] = useState<"current" | "draft">("draft");
 
   const onAccept = async (draftId: string) => {
@@ -56,15 +54,15 @@ export default function DocumentEditorPage() {
   }, [documentId, fetchDocument, fetchLogs, fetchTools, fetchVersions]);
 
   const fromVersionUrl = compareResult?.from_version
-    ? buildVersionPreviewUrl(documentId, compareResult.from_version, accessToken)
+    ? buildVersionPreviewUrl(documentId, compareResult.from_version)
     : null;
   const toVersionUrl = compareResult?.to_version
-    ? buildVersionPreviewUrl(documentId, compareResult.to_version, accessToken)
+    ? buildVersionPreviewUrl(documentId, compareResult.to_version)
     : null;
-  const currentPreviewUrl = documentId ? buildDocumentPreviewUrl(documentId, accessToken) : undefined;
+  const currentPreviewUrl = documentId ? buildDocumentPreviewUrl(documentId) : undefined;
   const latestDraft = useMemo(() => versions.find((version) => version.state === "draft"), [versions]);
   const draftPreviewUrl = latestDraft
-    ? buildVersionPreviewUrl(documentId, latestDraft.version_id, accessToken)
+    ? buildVersionPreviewUrl(documentId, latestDraft.version_id)
     : undefined;
   const activePreviewUrl = previewMode === "draft" && draftPreviewUrl ? draftPreviewUrl : currentPreviewUrl;
 

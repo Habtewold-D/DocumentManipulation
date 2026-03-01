@@ -19,8 +19,7 @@ export async function uploadDocument(file: File) {
   });
 }
 
-export function buildDocumentPreviewUrl(documentId: string, accessToken?: string | null) {
+export function buildDocumentPreviewUrl(documentId: string) {
   const base = getApiBaseUrl();
-  const tokenQuery = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
-  return `${base}/documents/${documentId}/preview${tokenQuery}`;
+  return `${base}/documents/${documentId}/preview`;
 }

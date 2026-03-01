@@ -13,8 +13,7 @@ export async function rejectDraft(documentId: string, draftId: string) {
   return apiRequest<VersionItem>(`/documents/${documentId}/drafts/${draftId}/reject`, { method: "POST" });
 }
 
-export function buildVersionPreviewUrl(documentId: string, versionId: string, accessToken?: string | null) {
+export function buildVersionPreviewUrl(documentId: string, versionId: string) {
   const base = getApiBaseUrl();
-  const tokenQuery = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
-  return `${base}/documents/${documentId}/versions/${versionId}/preview${tokenQuery}`;
+  return `${base}/documents/${documentId}/versions/${versionId}/preview`;
 }
