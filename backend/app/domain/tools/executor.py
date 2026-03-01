@@ -148,13 +148,14 @@ class ToolExecutor:
         curr_res = last_res
         for i, block in enumerate(captured_blocks):
             original_gap = float(block.get("original_gap", 0) or 0)
+            block_lh = float(block.get("original_baseline_height") or active_lh)
 
             if block.get("is_tail"):
                 spacing = 0
             elif block.get("same_paragraph"):
-                spacing = active_lh
+                spacing = block_lh
             elif original_gap > 0:
-                spacing = max(active_lh, original_gap)
+                spacing = max(original_gap, block_lh)
             else:
                 spacing = active_pg
                 
@@ -476,78 +477,132 @@ class ToolExecutor:
         preferred_page_number: int | None = None,
         restrict_page_number: int | None = None,
     ) -> int:
-        """Unified One-Pass Replacement: Standardized on Semantic Anchor and Push-Down Reflow."""
+        """Replace only the target span while preserving natural inline flow for neighboring text."""
         anchor = self._locate_semantic_anchor(pdf_doc, old_text, preferred_page_number=preferred_page_number)
-        if not anchor: return 0
+        if not anchor:
+            return 0
         if restrict_page_number is not None and anchor["page"].number + 1 != restrict_page_number:
             return 0
-        
+
         page = anchor["page"]
 
-        line_info = self._find_line_for_rect(page, anchor["rects"][-1])
-        if line_info:
-            line_rect, baseline_y = line_info
-        else:
-            line_rect = fitz.Rect(anchor["full_match_rect"])
-            baseline_y = anchor["baseline_y"]
+        exact_matches = self._find_all_matches_on_page(page, old_text)
+        target_rects = exact_matches[0] if exact_matches else anchor["rects"]
+        full_match_rect = fitz.Rect(target_rects[0])
+        for rect in target_rects:
+            full_match_rect |= rect
 
+        start_line_info = self._find_line_for_rect(page, target_rects[0])
+        end_line_info = self._find_line_for_rect(page, target_rects[-1])
+        if start_line_info:
+            start_line_rect, start_baseline_y = start_line_info
+        else:
+            start_line_rect = fitz.Rect(full_match_rect)
+            start_baseline_y = anchor["baseline_y"]
+        if end_line_info:
+            end_line_rect, end_baseline_y = end_line_info
+        else:
+            end_line_rect = fitz.Rect(full_match_rect)
+            end_baseline_y = anchor["baseline_y"]
+
+        block_rect = anchor.get("block_rect") or fitz.Rect(start_line_rect.x0, start_line_rect.y0, end_line_rect.x1, end_line_rect.y1)
+
+        # Tail text that should remain unchanged starts immediately after the target.
+        same_line_tail_tokens: list[tuple[float, str]] = []
         words = page.get_text("words")
-        tail_tokens: list[tuple[float, str]] = []
-        tail_x0 = anchor["full_match_rect"].x1
-        line_y0 = line_rect.y0
-        line_y1 = line_rect.y1
         for word in words:
             wx0, wy0, _, wy1, wtext = word[:5]
-            if wy1 <= line_y0 or wy0 >= line_y1:
+            if wy1 <= end_line_rect.y0 or wy0 >= end_line_rect.y1:
                 continue
-            if wx0 >= anchor["full_match_rect"].x1 - 0.5:
-                tail_tokens.append((float(wx0), str(wtext)))
+            if wx0 >= full_match_rect.x1 - 0.5:
+                same_line_tail_tokens.append((float(wx0), str(wtext)))
 
-        tail_text = ""
-        if tail_tokens:
-            tail_tokens.sort(key=lambda item: item[0])
-            tail_text = " ".join(token for _, token in tail_tokens).strip()
+        same_line_tail = ""
+        if same_line_tail_tokens:
+            same_line_tail_tokens.sort(key=lambda item: item[0])
+            same_line_tail = " ".join(token for _, token in same_line_tail_tokens).strip()
 
-        payload = new_text
-        if tail_text:
-            if not payload.endswith(" ") and not tail_text.startswith(" "):
-                payload = f"{payload} {tail_text}"
-            else:
-                payload = f"{payload}{tail_text}"
-        
-        # 1. CAPTURE subsequent blocks BELOW anchor using paragraph insertion strategy
+        below_line_tail_parts: list[str] = []
+        block_dict = page.get_text("dict", clip=block_rect)
+        for blk in block_dict.get("blocks", []):
+            if blk.get("type") != 0:
+                continue
+            for line in blk.get("lines", []):
+                lbox = line.get("bbox")
+                if not lbox:
+                    continue
+                if float(lbox[1]) > end_line_rect.y1 + 0.5:
+                    line_text = "".join(str(span.get("text", "")) for span in line.get("spans", [])).strip()
+                    if line_text:
+                        below_line_tail_parts.append(line_text)
+
+        inline_tail = " ".join(part for part in [same_line_tail, " ".join(below_line_tail_parts).strip()] if part).strip()
+
+        # Capture only content below this paragraph block; we will reconstruct target+tail ourselves.
         captured_blocks = self._capture_rest_of_document_data(
-            pdf_doc, page.number, 
-            y_threshold=anchor["line_bottom"] + 2.0,
-            gap_reference_y=anchor["baseline_y"]
+            pdf_doc,
+            page.number,
+            y_threshold=block_rect.y1 + 2.0,
+            gap_reference_y=block_rect.y1,
         )
-        
-        # 2. REDACT from anchor start to end of line to avoid overlap, then reinsert with push-down
-        redact_rect = fitz.Rect(anchor["rects"][0].x0, line_rect.y0, line_rect.x1, line_rect.y1)
-        page.add_redact_annot(redact_rect, fill=(1, 1, 1))
+
+        # Clear from target start to paragraph-block bottom per line.
+        # This avoids leaving old text on wrapped lines (duplication/overlay) while preserving text before target on first line.
+        block_dict_for_redact = page.get_text("dict", clip=block_rect)
+        for blk in block_dict_for_redact.get("blocks", []):
+            if blk.get("type") != 0:
+                continue
+            for line in blk.get("lines", []):
+                lbox = line.get("bbox")
+                if not lbox:
+                    continue
+                lrect = fitz.Rect(lbox)
+                if lrect.y1 < start_line_rect.y0 - 0.5:
+                    continue
+
+                if lrect.intersects(start_line_rect):
+                    rx0 = target_rects[0].x0
+                else:
+                    rx0 = block_rect.x0
+                rx1 = max(rx0 + 1.0, lrect.x1)
+                page.add_redact_annot(fitz.Rect(rx0, lrect.y0, rx1, lrect.y1), fill=(1, 1, 1))
         page.apply_redactions()
-        
-        # 3. RE-INSERT
-        lh, pg = self._infer_vertical_rhythm(page, fontsize)
-        lh = line_height_override or lh
-        pg = paragraph_gap_override or pg
-        
-        start_pt = fitz.Point(anchor["rects"][0].x0, baseline_y)
+
+        base_lh_detected, base_pg_detected = self._infer_vertical_rhythm(page, anchor["fontsize"])
+        target_lh = self._line_height(fontsize)
+        edited_lh = max(line_height_override or base_lh_detected, target_lh)
+        base_lh = base_lh_detected
+        pg = paragraph_gap_override or base_pg_detected
+
+        start_pt = fitz.Point(target_rects[0].x0, start_baseline_y)
         res = self._insert_wrapped_text(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=start_pt,
-            text=payload,
+            text=new_text,
             fontsize=fontsize,
             fontname=fontname,
             color=color,
             respect_start_y=True,
-            line_height_override=lh,
-            continuation_x=anchor["block_x"]
+            line_height_override=edited_lh,
+            continuation_x=anchor["block_x"],
         )
-        
-        # 4. REFLOW
-        self._reflow_remaining_blocks(pdf_doc, res, captured_blocks, lh, pg)
+
+        if inline_tail:
+            res = self._insert_wrapped_text(
+                pdf_doc=pdf_doc,
+                start_page=res.final_page,
+                start_point=fitz.Point(res.final_point.x, res.final_point.y),
+                text=inline_tail,
+                fontsize=anchor["fontsize"],
+                fontname=anchor["fontname"],
+                color=anchor["color"],
+                respect_start_y=True,
+                line_height_override=base_lh,
+                continuation_x=anchor["block_x"],
+            )
+
+        self._reflow_remaining_blocks(pdf_doc, res, captured_blocks, base_lh, pg)
         return 1
 
     @staticmethod
@@ -1429,6 +1484,12 @@ class ToolExecutor:
                     color=color
                 )
             else:
+                if tool_name == "change_font_size":
+                    override_lh = None
+                    override_pg = None
+                else:
+                    override_lh = active_lh
+                    override_pg = active_pg
                 changed = self._replace_text(
                     pdf_doc,
                     old_text=target_text,
@@ -1436,8 +1497,8 @@ class ToolExecutor:
                     fontsize=font_size,
                     fontname=font_name,
                     color=color,
-                    line_height_override=active_lh,
-                    paragraph_gap_override=active_pg,
+                    line_height_override=override_lh,
+                    paragraph_gap_override=override_pg,
                 )
         elif tool_name in {"highlight_text", "underline_text", "strikethrough_text"}:
             target_text = str(args.get("target_text", ""))
