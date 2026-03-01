@@ -18,6 +18,8 @@ def replace_text_with_reflow(
     preferred_page_number: int | None = None,
     restrict_page_number: int | None = None,
 ) -> int:
+    deletion_mode = not new_text.strip()
+
     anchor = executor._locate_semantic_anchor(pdf_doc, old_text, preferred_page_number=preferred_page_number)
     if not anchor:
         return 0
@@ -67,7 +69,10 @@ def replace_text_with_reflow(
             lbox = line.get("bbox")
             if not lbox:
                 continue
-            if float(lbox[1]) > end_line_rect.y1 + 0.5:
+            lrect = fitz.Rect(lbox)
+            if lrect.intersects(end_line_rect):
+                continue
+            if float(lbox[1]) >= end_line_rect.y1 - 0.5:
                 line_text = "".join(str(span.get("text", "")) for span in line.get("spans", [])).strip()
                 if line_text:
                     below_line_tail_parts.append(line_text)
@@ -107,19 +112,52 @@ def replace_text_with_reflow(
     base_lh = base_lh_detected
     pg = paragraph_gap_override or base_pg_detected
 
-    start_pt = fitz.Point(target_rects[0].x0, start_baseline_y)
-    res = executor._insert_wrapped_text(
-        pdf_doc=pdf_doc,
-        start_page=page,
-        start_point=start_pt,
-        text=new_text,
-        fontsize=fontsize,
-        fontname=fontname,
-        color=color,
-        respect_start_y=True,
-        line_height_override=edited_lh,
-        continuation_x=anchor["block_x"],
-    )
+    if deletion_mode and captured_blocks:
+        gap_cap = max(float(pg), float(base_lh) * 1.2)
+        first_content_block_adjusted = False
+        for block in captured_blocks:
+            if block.get("same_paragraph") or block.get("is_tail"):
+                continue
+
+            original_gap = float(block.get("original_gap", 0) or 0)
+            if original_gap > gap_cap * 1.6:
+                original_gap = gap_cap
+
+            if not first_content_block_adjusted:
+                if inline_tail:
+                    block["original_gap"] = min(original_gap, float(pg))
+                else:
+                    block["original_gap"] = 0.0
+                first_content_block_adjusted = True
+            else:
+                block["original_gap"] = original_gap
+
+    anchor_y = start_baseline_y
+    if deletion_mode and not inline_tail:
+        margin = 36.0
+        anchor_y = max(margin + base_lh, start_baseline_y - float(pg))
+
+    start_pt = fitz.Point(target_rects[0].x0, anchor_y)
+    if deletion_mode:
+        class _DeletionAnchor:
+            pass
+
+        res = _DeletionAnchor()
+        res.final_page = page
+        res.final_point = start_pt
+    else:
+        res = executor._insert_wrapped_text(
+            pdf_doc=pdf_doc,
+            start_page=page,
+            start_point=start_pt,
+            text=new_text,
+            fontsize=fontsize,
+            fontname=fontname,
+            color=color,
+            respect_start_y=True,
+            line_height_override=edited_lh,
+            continuation_x=anchor["block_x"],
+        )
 
     if inline_tail:
         res = executor._insert_wrapped_text(

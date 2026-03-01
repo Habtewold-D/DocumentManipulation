@@ -18,10 +18,10 @@ class GroqClient:
         system_prompt = (
             "You are an MCP planner for a PDF editor. "
             "Return strict JSON only with shape: {\"plan\":[{\"tool\":string,\"args\":object}]}. "
-            "Use only these tools: replace_text, add_text, search_replace, "
+            "Use only these tools: remove_text, replace_text, add_text, search_replace, "
             "change_font_size, change_font_color, set_text_style, convert_case, highlight_text, "
             "underline_text, strikethrough_text, extract_text. "
-            "Required args: replace_text(old_text,new_text,scope), search_replace(search,replace), "
+            "Required args: remove_text(old_text,scope), replace_text(old_text,new_text,scope), search_replace(search,replace), "
             "add_text(text,page_number,x,y), extract_text(scope). "
             "If command is ambiguous and missing critical values, return {\"plan\":[]}"
         )

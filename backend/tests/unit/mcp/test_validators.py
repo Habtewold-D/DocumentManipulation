@@ -19,6 +19,21 @@ def test_validate_tool_plan_accepts_valid_replace_text() -> None:
     validate_tool_plan(plan)
 
 
+def test_validate_tool_plan_accepts_valid_remove_text() -> None:
+    plan = [
+        {
+            "tool": "remove_text",
+            "args": {
+                "document_id": "doc-1",
+                "old_text": "CompanyX",
+                "scope": "all",
+            },
+        }
+    ]
+
+    validate_tool_plan(plan)
+
+
 def test_validate_tool_plan_rejects_unknown_tool() -> None:
     plan = [{"tool": "unknown_tool", "args": {"document_id": "doc-1"}}]
 

@@ -10,6 +10,21 @@ class ToolSchema:
 
 
 TOOL_REGISTRY: dict[str, ToolSchema] = {
+    "remove_text": ToolSchema(
+        name="remove_text",
+        input_schema={
+            "document_id": "string",
+            "old_text": "string",
+            "scope": "page|all",
+            "page_number": "number?",
+        },
+        output_schema={
+            "success": "boolean",
+            "pages_modified": "number[]",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
     "replace_text": ToolSchema(
         name="replace_text",
         input_schema={

@@ -5,6 +5,7 @@ type ToolsResponse = {
 };
 
 const SUPPORTED_TOOLS = new Set([
+  "remove_text",
   "replace_text",
   "add_text",
   "search_replace",

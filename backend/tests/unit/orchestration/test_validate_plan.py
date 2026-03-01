@@ -38,6 +38,26 @@ def test_validate_plan_normalizes_search_replace_aliases() -> None:
     assert args["replace"] == "B"
 
 
+def test_validate_plan_normalizes_remove_text_aliases() -> None:
+    state = {
+        "document_id": "doc-1",
+        "plan": [
+            {
+                "tool": "remove_text",
+                "args": {"target_text": "Confidential"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["old_text"] == "Confidential"
+    assert args["scope"] == "all"
+    assert args["document_id"] == "doc-1"
+
+
 def test_validate_plan_normalizes_change_font_color_aliases() -> None:
     state = {
         "document_id": "doc-1",
@@ -227,3 +247,22 @@ def test_validate_plan_add_text_extracts_end_position_from_last_part_command() -
     assert result["status"] == "validated"
     args = result["plan"][0]["args"]
     assert args["position"] == "end"
+
+
+def test_validate_plan_normalizes_invalid_extract_scope() -> None:
+    state = {
+        "document_id": "doc-1",
+        "plan": [
+            {
+                "tool": "extract_text",
+                "args": {"scope": "paragraph"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "all"
+    assert args["document_id"] == "doc-1"

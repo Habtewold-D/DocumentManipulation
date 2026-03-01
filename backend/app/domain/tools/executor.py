@@ -568,9 +568,14 @@ class ToolExecutor:
         pdf_doc = self._load_doc(source_asset_id)
         changed = 0
 
-        if tool_name in {"replace_text", "search_replace"}:
-            old_text = str(args.get("old_text", "") or args.get("search", ""))
-            new_text = str(args.get("new_text", "") or args.get("replace", ""))
+        if tool_name in {"replace_text", "search_replace", "remove_text"}:
+            old_text = str(
+                args.get("old_text", "")
+                or args.get("search", "")
+                or args.get("target_text", "")
+                or args.get("text", "")
+            )
+            new_text = "" if tool_name == "remove_text" else str(args.get("new_text", "") or args.get("replace", ""))
             
             # v32.0: Unified Style & Rhythm Inference
             anchor = self._locate_semantic_anchor(pdf_doc, old_text)
@@ -587,7 +592,7 @@ class ToolExecutor:
             page_number_raw = args.get("page_number")
             page_number = int(page_number_raw) if page_number_raw is not None else None
 
-            if not old_text or old_text == new_text:
+            if not old_text or (tool_name != "remove_text" and old_text == new_text):
                 changed = 0
             else:
                 changed = 0

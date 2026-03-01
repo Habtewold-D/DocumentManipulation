@@ -59,6 +59,27 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
         if "new_text" not in args and isinstance(args.get("replace"), str):
             args["new_text"] = args["replace"]
 
+    if tool_name == "remove_text":
+        if "old_text" not in args:
+            for alias in ("target_text", "text", "search", "target", "value"):
+                value = args.get(alias)
+                if isinstance(value, str) and value.strip():
+                    args["old_text"] = value.strip()
+                    break
+        if "scope" not in args:
+            args["scope"] = "all"
+
+    if tool_name in {"extract_text", "replace_text", "remove_text"}:
+        scope = args.get("scope")
+        if isinstance(scope, str):
+            normalized_scope = scope.strip().lower()
+            if normalized_scope in {"page", "all"}:
+                args["scope"] = normalized_scope
+            else:
+                args["scope"] = "page" if args.get("page_number") is not None else "all"
+        elif "scope" not in args:
+            args["scope"] = "all"
+
     if tool_name == "change_font_color" and "color" not in args:
         for alias in ("font_color", "text_color"):
             value = args.get(alias)

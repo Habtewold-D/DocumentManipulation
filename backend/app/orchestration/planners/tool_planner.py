@@ -7,11 +7,56 @@ class ToolPlanner:
 
     def create_plan(self, command: str) -> dict:
         plan = self.client.plan(command)
-        if plan.get("plan"):
-            return plan
-
         command_lower = command.lower()
         import re
+
+        remove_prefix_match = re.match(r"^\s*(?:remove|delete)\s+(?:the\s+)?(?:text\s+)?(.+)$", command, flags=re.IGNORECASE | re.DOTALL)
+        if remove_prefix_match:
+            candidate = remove_prefix_match.group(1).strip().strip('"\'')
+            if candidate:
+                return {
+                    "status": "fallback",
+                    "plan": [
+                        {
+                            "tool": "remove_text",
+                            "args": {
+                                "old_text": candidate,
+                                "scope": "all",
+                            },
+                        }
+                    ],
+                }
+
+        if plan.get("plan"):
+            plan_steps = plan.get("plan", []) if isinstance(plan, dict) else []
+            if (
+                isinstance(plan_steps, list)
+                and len(plan_steps) == 1
+                and isinstance(plan_steps[0], dict)
+                and plan_steps[0].get("tool") == "extract_text"
+                and any(token in command_lower for token in ("remove ", "delete "))
+            ):
+                extract_args = plan_steps[0].get("args", {}) if isinstance(plan_steps[0].get("args", {}), dict) else {}
+                target = str(
+                    extract_args.get("target_text", "")
+                    or extract_args.get("text", "")
+                    or extract_args.get("query", "")
+                ).strip()
+                if target:
+                    return {
+                        "status": "fallback",
+                        "plan": [
+                            {
+                                "tool": "remove_text",
+                                "args": {
+                                    "old_text": target,
+                                    "scope": "all",
+                                },
+                            }
+                        ],
+                    }
+            return plan
+
         # 1. High-precision extraction for long multi-paragraph requests
         # Use first match to split, and support "below to", "next to both" etc.
         spatial_pattern = r'\b(below to|below|after|next to both|next to|above|beside)\b'
@@ -86,6 +131,27 @@ class ToolPlanner:
                     }
                 ],
             }
+
+        remove_match = re.search(
+            r"\b(?:remove|delete)\s+(?:the\s+)?(?:text\s+)?[\"']?([^\"'\n,.]+)[\"']?",
+            command,
+            flags=re.IGNORECASE,
+        )
+        if remove_match:
+            target = remove_match.group(1).strip()
+            if target:
+                return {
+                    "status": "fallback",
+                    "plan": [
+                        {
+                            "tool": "remove_text",
+                            "args": {
+                                "old_text": target,
+                                "scope": "all",
+                            },
+                        }
+                    ],
+                }
 
         return {
             "status": "fallback",
