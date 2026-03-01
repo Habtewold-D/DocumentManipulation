@@ -110,6 +110,39 @@ Move the following to background workers/queues:
 - Command execution pipeline (LangGraph + tool execution + PDF rewrite + upload + preview manifest)
 - Version retention cleanup (stale drafts, rejected versions, old accepted versions asset deletion)
 
+Worker queue implementation:
+- Backend queue: Redis + RQ
+- API submits queued jobs and returns `run_id`
+- Worker process executes queued command runs
+
+Environment variables:
+- `QUEUE_BACKEND=rq`
+- `QUEUE_REDIS_URL=redis://localhost:6379/0`
+- `QUEUE_NAME=pdf-agent`
+- `QUEUE_JOB_TIMEOUT_SECONDS=1800`
+
+Run commands:
+- Start Redis: `redis-server`
+- Start API: `uvicorn app.main:app --reload`
+- Start worker: `python -m app.jobs.worker`
+
+### Developer Startup (Recommended)
+Use one command instead of three terminals.
+
+From `backend/`:
+- `make dev-up` to start API + worker + Redis together
+- `make dev-rebuild` when dependencies or Dockerfile changed
+- `make dev-logs` to tail all service logs
+- `make dev-down` to stop everything
+
+This runs services through [docker-compose.backend.yml](docker-compose.backend.yml) so queue behavior matches real deployment more closely.
+
+Build speed note:
+- `make dev-up` does not force image rebuild.
+- `make dev-rebuild` forces rebuild.
+- Dependency install is cached in Docker layers from `pyproject.toml` (single source of truth), so changing only files under `backend/app/` should skip reinstalling packages.
+
+
 Keep synchronous for now:
 - Compare endpoint based on preview-manifest hashes (already lightweight)
 - PDF preview fetch endpoint (user waits for immediate render)

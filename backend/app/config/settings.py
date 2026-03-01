@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     jwt_access_token_minutes: int = 60
     v2_execution_mode: str = "off"
     v2_canary_percent: int = 0
+    queue_backend: str = "rq"
+    queue_redis_url: str = "redis://localhost:6379/0"
+    queue_name: str = "pdf-agent"
+    queue_job_timeout_seconds: int = 1800
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

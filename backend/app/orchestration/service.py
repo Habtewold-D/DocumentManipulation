@@ -266,6 +266,10 @@ class OrchestrationService:
             repository.db.commit()
 
             outcome = service._execute_with_mode(run)
+            latest = repository.get(run_id)
+            if latest and latest.status == "canceled":
+                return
+
             run.status = str(outcome.get("status", "failed"))
             run.draft_version_id = str(outcome.get("draft_version_id") or "") or None
             details = outcome.get("details") if isinstance(outcome.get("details"), dict) else {}

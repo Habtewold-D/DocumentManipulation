@@ -1,0 +1,52 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: pdf-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend-api:
+    image: pdf-backend:dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pdf-backend-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    working_dir: /app
+    env_file:
+      - ./backend/.env
+    environment:
+      QUEUE_BACKEND: rq
+      QUEUE_REDIS_URL: redis://redis:6379/0
+      QUEUE_NAME: pdf-agent
+      QUEUE_JOB_TIMEOUT_SECONDS: 1800
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  backend-worker:
+    image: pdf-backend:dev
+    container_name: pdf-backend-worker
+    command: python -m app.jobs.worker
+    working_dir: /app
+    env_file:
+      - ./backend/.env
+    environment:
+      QUEUE_BACKEND: rq
+      QUEUE_REDIS_URL: redis://redis:6379/0
+      QUEUE_NAME: pdf-agent
+      QUEUE_JOB_TIMEOUT_SECONDS: 1800
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy

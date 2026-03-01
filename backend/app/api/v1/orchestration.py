@@ -1,8 +1,9 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.jobs.queue import cancel_queued_run, enqueue_run_processing
 from app.orchestration.repository import CommandRunRepository
 from app.orchestration.schemas import CommandRequest, CommandResponse, CommandRunItem
 from app.orchestration.service import OrchestrationService
@@ -14,15 +15,19 @@ router = APIRouter()
 def run_command(
     document_id: str,
     payload: CommandRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     service = OrchestrationService(CommandRunRepository(db))
     try:
         response = service.enqueue_command(document_id, payload.command, idempotency_key=idempotency_key)
-        background_tasks.add_task(OrchestrationService.process_queued_run, response.run_id)
+        enqueue_run_processing(response.run_id)
         return response
+    except RuntimeError as error:
+        return JSONResponse(
+            status_code=503,
+            content={"error": str(error)},
+        )
     except ValueError as error:
         message = str(error)
         status_code = 404 if message == "Document not found" else 400
@@ -52,7 +57,11 @@ def list_document_runs(document_id: str, limit: int = 20, db: Session = Depends(
 def cancel_run(run_id: str, db: Session = Depends(get_db)) -> CommandRunItem:
     service = OrchestrationService(CommandRunRepository(db))
     try:
-        return service.cancel_run(run_id)
+        run = service.cancel_run(run_id)
+        cancel_queued_run(run_id)
+        return run
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except ValueError as error:
         message = str(error)
         status_code = 404 if message == "Run not found" else 409
@@ -60,12 +69,14 @@ def cancel_run(run_id: str, db: Session = Depends(get_db)) -> CommandRunItem:
 
 
 @router.post("/commands/{run_id}/retry", response_model=CommandRunItem)
-def retry_run(run_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> CommandRunItem:
+def retry_run(run_id: str, db: Session = Depends(get_db)) -> CommandRunItem:
     service = OrchestrationService(CommandRunRepository(db))
     try:
         run = service.retry_run(run_id)
-        background_tasks.add_task(OrchestrationService.process_queued_run, run.run_id)
+        enqueue_run_processing(run.run_id)
         return run
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except ValueError as error:
         message = str(error)
         status_code = 404 if message == "Run not found" else 409
