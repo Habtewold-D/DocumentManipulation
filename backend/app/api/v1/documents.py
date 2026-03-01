@@ -1,40 +1,16 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.auth.security import TokenError, decode_access_token
 from app.db.session import get_db
 from app.domain.documents.repository import DocumentRepository
 from app.domain.documents.schemas import DocumentSummary, UploadDocumentResult
 from app.domain.documents.service import DocumentService
-from app.domain.users.repository import UserRepository
 from app.domain.versions.repository import VersionRepository
 from app.storage.asset_service import AssetService
 from app.storage.cloudinary_client import CloudinaryClient
 
 router = APIRouter()
-
-
-def _resolve_user_id(
-    db: Session,
-    authorization: str | None,
-    access_token: str | None,
-) -> str:
-    token = access_token
-    if not token and authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", maxsplit=1)[1]
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing authorization token")
-
-    try:
-        user_id = decode_access_token(token)
-    except TokenError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from error
-
-    user = UserRepository(db).get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user.id
 
 
 @router.post("/documents/upload", response_model=UploadDocumentResult)
@@ -105,11 +81,8 @@ def get_document(
 def preview_document(
     document_id: str,
     db: Session = Depends(get_db),
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    access_token: str | None = Query(default=None),
+    user_id: str = Depends(get_current_user),
 ) -> Response:
-    user_id = _resolve_user_id(db, authorization, access_token)
-
     document = DocumentRepository(db).get_for_owner(user_id, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")

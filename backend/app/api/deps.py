@@ -1,4 +1,4 @@
-from fastapi import Depends, Header, HTTPException
+from fastapi import Cookie, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth.security import TokenError, decode_access_token
@@ -9,10 +9,17 @@ from app.domain.users.repository import UserRepository
 def get_current_user(
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None, alias="Authorization"),
+    access_token_cookie: str | None = Cookie(default=None, alias="pdf_agent_token"),
 ) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
+    token: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", maxsplit=1)[1]
+    elif access_token_cookie:
+        token = access_token_cookie
+
+    if not token:
         raise HTTPException(status_code=401, detail="Missing authorization token")
-    token = authorization.split(" ", maxsplit=1)[1]
+
     try:
         user_id = decode_access_token(token)
     except TokenError as error:

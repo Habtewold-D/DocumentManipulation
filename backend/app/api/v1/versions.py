@@ -1,16 +1,13 @@
 from fastapi import APIRouter
 from fastapi import Depends
-from fastapi import Header
 from fastapi import HTTPException
-from fastapi import Query
 from fastapi import Response
 from sqlalchemy.orm import Session
 
-from app.auth.security import TokenError, decode_access_token
+from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.domain.documents.repository import DocumentRepository
 from app.domain.logs.repository import ToolLogRepository
-from app.domain.users.repository import UserRepository
 from app.domain.versions.retention import VersionRetentionService
 from app.domain.versions.repository import VersionRepository
 from app.domain.versions.schemas import VersionItem
@@ -18,28 +15,6 @@ from app.domain.versions.service import VersionService
 from app.storage.cloudinary_client import CloudinaryClient
 
 router = APIRouter()
-
-
-def _resolve_user_id(
-    db: Session,
-    authorization: str | None,
-    access_token: str | None,
-) -> str:
-    token = access_token
-    if not token and authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", maxsplit=1)[1]
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing authorization token")
-
-    try:
-        user_id = decode_access_token(token)
-    except TokenError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from error
-
-    user = UserRepository(db).get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user.id
 
 
 @router.get("/documents/{document_id}/versions", response_model=list[VersionItem])
@@ -99,11 +74,8 @@ def preview_version(
     document_id: str,
     version_id: str,
     db: Session = Depends(get_db),
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    access_token: str | None = Query(default=None),
+    user_id: str = Depends(get_current_user),
 ) -> Response:
-    user_id = _resolve_user_id(db, authorization, access_token)
-
     document = DocumentRepository(db).get_for_owner(user_id, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
