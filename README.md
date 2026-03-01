@@ -66,6 +66,9 @@ _style (bold/italic)
 ### V2 (Structure + Branding + AI)
 These are added after V1 text tools are stable.
 
+**Text Editing Additions**
+- remove_text
+
 **Document Structure Controls**
 - add_page
 - delete_page
@@ -95,6 +98,86 @@ These are technically harder and come after V2.
 - Replace existing images (requires object detection)
 - Remove images (layout-aware deletion)
 - Automatically create table of contents (structure detection)
+
+---
+
+## Pre-V2 Hardening Plan (Make V1 Production-Ready First)
+
+Before implementing V2 features, harden V1 for reliability, scale, and safe rollouts.
+
+### 1) Move Heavy Work to Background Jobs
+Move the following to background workers/queues:
+- Command execution pipeline (LangGraph + tool execution + PDF rewrite + upload + preview manifest)
+- Version retention cleanup (stale drafts, rejected versions, old accepted versions asset deletion)
+
+Keep synchronous for now:
+- Compare endpoint based on preview-manifest hashes (already lightweight)
+- PDF preview fetch endpoint (user waits for immediate render)
+
+### 2) Add Command Run Lifecycle API
+- `POST /documents/{id}/commands` returns `202` + `run_id` (queued)
+- `GET /commands/{run_id}` returns status/progress/result/error
+- `POST /commands/{run_id}/cancel`
+- `POST /commands/{run_id}/retry`
+- `GET /documents/{id}/commands` history
+
+### 3) Add Feature Flags + Shadow Execution (Recommended)
+Yes, this should be done before V2 rollout.
+
+Suggested flags/modes:
+- `V2_EXECUTION_MODE=off|shadow|canary|on`
+- `V2_CANARY_PERCENT=0..100`
+
+Behavior:
+- `off`: V1 only
+- `shadow`: V1 result is returned; V2 runs in background for comparison only
+- `canary`: selected % of traffic executes V2 as primary, fallback to V1 on failure
+- `on`: V2 primary for all traffic
+
+### 4) Observability and Safety Nets
+- Per-tool and per-command timing metrics
+- Structured error taxonomy (validation/tool/pdf/storage)
+- Correlation IDs in logs and run records
+- Golden regression tests for critical text flows
+- Idempotency key coverage on async submission path
+
+---
+
+## V2 Delivery Order (Recommended)
+
+Deliver V2 in this order to reduce risk and dependency churn.
+
+### Phase A: V2 Foundation
+1. `remove_text` (low surface area; builds confidence in text-flow safety)
+2. Feature-flag + shadow execution path live for all new V2 tools
+
+### Phase B: Document Structure Controls
+3. `add_page`
+4. `delete_page`
+5. `reorder_pages`
+6. `rotate_image`
+7. `insert_image`
+8. `resize_image`
+
+### Phase C: Visual Branding Controls
+9. `add_header`
+10. `add_footer`
+11. `add_page_numbers`
+12. `add_watermark` (text, then image)
+13. `change_page_background`
+
+### Phase D: AI-Powered Features
+14. Summarize PDF content
+15. Rephrase / improve text
+16. Translate PDF text
+17. Detect inconsistencies or duplicates
+18. Extract tables into CSV / Excel
+
+### Phase E: Later (Harder Features)
+19. Remove watermarks (requires detection)
+20. Replace existing images (requires object detection)
+21. Remove images (layout-aware deletion)
+22. Automatically create table of contents (structure detection)
 
 ---
 

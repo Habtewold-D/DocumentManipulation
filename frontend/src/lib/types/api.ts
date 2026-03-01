@@ -4,4 +4,5 @@ export type CommandRunResponse = {
   draft_version_id: string;
   created_at: string;
   error?: string | null;
+  execution_mode?: string | null;
 };

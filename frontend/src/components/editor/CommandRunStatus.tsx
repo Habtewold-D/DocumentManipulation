@@ -14,6 +14,10 @@ function StatusIcon({ status }: { status: string }) {
       return <AlertCircle className="h-4 w-4 text-destructive" />;
     case "running":
       return <Loader2 className="h-4 w-4 text-primary animate-spin" />;
+    case "queued":
+      return <Clock className="h-4 w-4 text-warning" />;
+    case "canceled":
+      return <AlertCircle className="h-4 w-4 text-warning" />;
     default:
       return <Clock className="h-4 w-4 text-warning" />;
   }
@@ -24,6 +28,8 @@ function statusBadgeClass(status: string): string {
     case "completed":
       return "badge-accepted";
     case "failed":
+      return "badge-rejected";
+    case "canceled":
       return "badge-rejected";
     default:
       return "badge-draft";
@@ -61,10 +67,12 @@ export function CommandRunStatus({ result, requestError }: Props) {
         </span>
       </div>
       <div className="mt-3 space-y-1.5 text-xs">
-        <p>
-          <span className="text-muted-foreground">Draft Version:</span>{" "}
-          <span className="font-mono font-medium">{result.draft_version_id.slice(0, 12)}</span>
-        </p>
+        {result.draft_version_id ? (
+          <p>
+            <span className="text-muted-foreground">Draft Version:</span>{" "}
+            <span className="font-mono font-medium">{result.draft_version_id.slice(0, 12)}</span>
+          </p>
+        ) : null}
         <p>
           <span className="text-muted-foreground">Created:</span>{" "}
           <span className="font-medium">{new Date(result.created_at).toLocaleString()}</span>

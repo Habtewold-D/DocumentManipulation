@@ -7,3 +7,7 @@ export async function runCommand(documentId: string, command: string) {
     body: JSON.stringify({ command }),
   });
 }
+
+export async function getCommandRun(runId: string) {
+  return apiRequest<CommandRunResponse>(`/commands/${runId}`);
+}

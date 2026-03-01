@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
     jwt_access_token_minutes: int = 60
+    v2_execution_mode: str = "off"
+    v2_canary_percent: int = 0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -51,9 +51,6 @@ class VersionService:
         if not document:
             raise ValueError("Document not found")
 
-        if self.retention_service:
-            self.retention_service.cleanup_stale_drafts()
-            self.retention_service.keep_latest_five_accepted(document_id)
         self.repository.db.commit()
         return self._to_item(accepted)
 
@@ -65,8 +62,5 @@ class VersionService:
             raise ValueError(f"Only draft versions can be rejected. Current state: {draft.state}")
 
         rejected = self.repository.update_state(draft, "rejected")
-        if self.retention_service:
-            self.retention_service.cleanup_rejected_immediately(document_id)
-            self.retention_service.cleanup_stale_drafts()
         self.repository.db.commit()
         return self._to_item(rejected)

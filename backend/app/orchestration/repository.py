@@ -23,3 +23,12 @@ class CommandRunRepository:
             CommandRun.idempotency_key == idempotency_key,
         )
         return self.db.scalars(stmt).first()
+
+    def list_for_document(self, document_id: str, limit: int = 20) -> list[CommandRun]:
+        stmt = (
+            select(CommandRun)
+            .where(CommandRun.document_id == document_id)
+            .order_by(CommandRun.created_at.desc())
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
