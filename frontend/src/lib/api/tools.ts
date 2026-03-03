@@ -20,6 +20,9 @@ const SUPPORTED_TOOLS = new Set([
   "add_page",
   "delete_page",
   "reorder_pages",
+  "insert_image",
+  "resize_image",
+  "rotate_image",
 ]);
 
 export async function listTools() {

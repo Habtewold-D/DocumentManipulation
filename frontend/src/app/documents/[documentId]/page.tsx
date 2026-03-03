@@ -43,8 +43,8 @@ export default function DocumentEditorPage() {
     await Promise.all([fetchVersions(), fetchLogs()]);
   };
 
-  const onRunCommand = async (command: string) => {
-    await run(command);
+  const onRunCommand = async (command: string, imageUrl?: string | null) => {
+    await run(command, imageUrl);
     await Promise.all([fetchVersions(), fetchLogs(), fetchDocument()]);
   };
 

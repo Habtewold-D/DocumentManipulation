@@ -28,11 +28,11 @@ export function useCommandRun(documentId: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const run = async (command: string) => {
+  const run = async (command: string, imageUrl?: string | null) => {
     setLoading(true);
     setError(null);
     try {
-      const queued = await runCommand(documentId, command);
+      const queued = await runCommand(documentId, command, imageUrl);
       setResult(queued);
       const final = await pollUntilDone(queued.run_id, setResult);
       return final;
