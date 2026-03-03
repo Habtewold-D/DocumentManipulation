@@ -24,14 +24,14 @@ def locate_semantic_anchor(
     ]
     unique_candidates = [candidate for candidate in search_candidates if candidate]
 
-    pages_to_scan = list(pdf_doc)
+    page_indices = list(range(len(pdf_doc)))
     if prefer_last:
-        pages_to_scan = list(reversed(pages_to_scan))
+        page_indices = list(reversed(page_indices))
     elif preferred_page_number and 1 <= preferred_page_number <= len(pdf_doc):
-        pref_page = pdf_doc[preferred_page_number - 1]
-        if pref_page in pages_to_scan:
-            pages_to_scan.remove(pref_page)
-            pages_to_scan.insert(0, pref_page)
+        pref_index = preferred_page_number - 1
+        page_indices = [pref_index] + [index for index in page_indices if index != pref_index]
+
+    pages_to_scan = [pdf_doc[index] for index in page_indices]
 
     for candidate in unique_candidates:
         for page in pages_to_scan:

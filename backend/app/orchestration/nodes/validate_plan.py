@@ -18,6 +18,115 @@ def _parse_number(value: object) -> float | int | None:
     return None
 
 
+_ORDINAL_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
+
+
+def _parse_ordinal_token(token: str) -> int | None:
+    normalized = token.strip().lower()
+    if normalized in _ORDINAL_WORDS:
+        return _ORDINAL_WORDS[normalized]
+
+    match = re.match(r"(\d+)(?:st|nd|rd|th)?$", normalized)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _parse_page_number_from_command(command: str) -> int | None:
+    patterns = [
+        r"\bpage\s+(\d+)\b",
+        r"\bpage\s+(one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b(?!\s+paragraph\b)",
+        r"\b(\d+)(?:st|nd|rd|th)\s+page\b",
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+page\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_ordinal_token(match.group(1))
+        if parsed and parsed > 0:
+            return parsed
+    return None
+
+
+def _parse_occurrence_from_command(command: str) -> int | None:
+    patterns = [
+        r"\b(\d+)(?:st|nd|rd|th)?\s+occurrence\b",
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+occurrence\b",
+        r"\boccurrence\s+(\d+)(?:st|nd|rd|th)?\b",
+        r"\boccurrence\s+(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_ordinal_token(match.group(1))
+        if parsed and parsed > 0:
+            return parsed
+    return None
+
+
+def _parse_paragraph_index_from_command(command: str) -> int | None:
+    patterns = [
+        r"\b(\d+)(?:st|nd|rd|th)?\s+paragraph\b",
+        r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+paragraph\b",
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+paragraph\b",
+        r"\bparagraph\s+(\d+)(?:st|nd|rd|th)?\b",
+        r"\bparagraph\s+(one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        r"\bparagraph\s+(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_ordinal_token(match.group(1))
+        if parsed and parsed > 0:
+            return parsed
+    return None
+
+
+def _extract_target_text_from_command(command: str) -> str | None:
+    patterns = [
+        r"\boccurrence\s+of\s+[\"']?(.+?)[\"']?(?=\s+to\s+\w+\b|\s+on\s+\w+\b|\s+in\s+\w+\b|\s+at\s+\w+\b|\s+from\s+\w+\b|\s+with\s+\w+\b|\s*$|[.,])",
+        r"\bcolor\s+of\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)?\s*(?:occurrence\s+of\s+)?[\"']?(.+?)[\"']?(?=\s+to\s+\w+\b|\s+on\s+\w+\b|\s+in\s+\w+\b|\s*$|[.,])",
+        r"\bhighlight\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)?\s*(?:occurrence\s+of\s+)?[\"']?(.+?)[\"']?(?=\s+on\s+\w+\b|\s+in\s+\w+\b|\s+at\s+\w+\b|\s+from\s+\w+\b|\s*$|[.,])",
+        r"\bunderline\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)?\s*(?:occurrence\s+of\s+)?[\"']?(.+?)[\"']?(?=\s+on\s+\w+\b|\s+in\s+\w+\b|\s+at\s+\w+\b|\s+from\s+\w+\b|\s*$|[.,])",
+        r"\bstrikethrough\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)?\s*(?:occurrence\s+of\s+)?[\"']?(.+?)[\"']?(?=\s+on\s+\w+\b|\s+in\s+\w+\b|\s+at\s+\w+\b|\s+from\s+\w+\b|\s*$|[.,])",
+        r"\bremove\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)?\s*(?:occurrence\s+of\s+)?[\"']?(.+?)[\"']?(?=\s+on\s+\w+\b|\s+in\s+\w+\b|\s+at\s+\w+\b|\s+from\s+\w+\b|\s*$|[.,])",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, command, flags=re.IGNORECASE)
+        if not match:
+            continue
+        extracted = match.group(1).strip()
+        extracted = re.sub(r"^(?:the\s+)?(?:word|text|phrase|letter)\s+", "", extracted, flags=re.IGNORECASE).strip()
+        extracted = extracted.strip(" \"'`")
+        if extracted:
+            return extracted
+    return None
+
+
 def _normalize_step_args(step: dict, document_id: str | None, command: str | None) -> None:
     args = step.setdefault("args", {})
     if not isinstance(args, dict):
@@ -46,6 +155,10 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
             if isinstance(value, str) and value.strip():
                 args["target_text"] = value
                 break
+        if "target_text" not in args and isinstance(command, str):
+            extracted_target = _extract_target_text_from_command(command)
+            if extracted_target:
+                args["target_text"] = extracted_target
 
     if tool_name == "search_replace":
         if "search" not in args and isinstance(args.get("old_text"), str):
@@ -66,10 +179,14 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
                 if isinstance(value, str) and value.strip():
                     args["old_text"] = value.strip()
                     break
+        if "old_text" not in args and isinstance(command, str):
+            extracted_target = _extract_target_text_from_command(command)
+            if extracted_target:
+                args["old_text"] = extracted_target
         if "scope" not in args:
             args["scope"] = "all"
 
-    if tool_name in {"extract_text", "replace_text", "remove_text"}:
+    if tool_name in {"extract_text", "replace_text", "remove_text", "search_replace"}:
         scope = args.get("scope")
         if isinstance(scope, str):
             normalized_scope = scope.strip().lower()
@@ -77,6 +194,79 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
                 args["scope"] = normalized_scope
             else:
                 args["scope"] = "page" if args.get("page_number") is not None else "all"
+        elif "scope" not in args:
+            args["scope"] = "all"
+
+    targeting_tools = {
+        "replace_text",
+        "remove_text",
+        "search_replace",
+        "extract_text",
+        "change_font_size",
+        "change_font_color",
+        "set_text_style",
+        "convert_case",
+        "highlight_text",
+        "underline_text",
+        "strikethrough_text",
+    }
+    if tool_name in targeting_tools:
+        normalized_scope = args.get("scope")
+        if isinstance(normalized_scope, str):
+            scope_token = normalized_scope.strip().lower()
+            if scope_token in {"page", "all"}:
+                args["scope"] = scope_token
+            else:
+                args["scope"] = "page" if args.get("page_number") is not None else "all"
+
+        page_num = _parse_number(args.get("page_number") if "page_number" in args else args.get("page"))
+        if isinstance(page_num, (int, float)):
+            int_page = int(page_num)
+            if int_page > 0:
+                args["page_number"] = int_page
+
+        paragraph_num = _parse_number(args.get("paragraph_index") if "paragraph_index" in args else args.get("paragraph"))
+        if isinstance(paragraph_num, (int, float)):
+            int_paragraph = int(paragraph_num)
+            if int_paragraph > 0:
+                args["paragraph_index"] = int_paragraph
+
+        if "occurrence" in args:
+            occurrence_num = _parse_number(args.get("occurrence"))
+            if isinstance(occurrence_num, (int, float)) and int(occurrence_num) > 0:
+                args["occurrence"] = int(occurrence_num)
+            else:
+                args.pop("occurrence", None)
+
+        if isinstance(command, str):
+            if "page_number" not in args:
+                command_page = _parse_page_number_from_command(command)
+                if command_page is not None:
+                    args["page_number"] = command_page
+
+            if "paragraph_index" not in args:
+                command_paragraph = _parse_paragraph_index_from_command(command)
+                if command_paragraph is not None:
+                    args["paragraph_index"] = command_paragraph
+
+            if tool_name in {
+                "replace_text",
+                "remove_text",
+                "search_replace",
+                "change_font_size",
+                "change_font_color",
+                "set_text_style",
+                "convert_case",
+                "highlight_text",
+                "underline_text",
+                "strikethrough_text",
+            } and "occurrence" not in args:
+                command_occurrence = _parse_occurrence_from_command(command)
+                if command_occurrence is not None:
+                    args["occurrence"] = command_occurrence
+
+        if "page_number" in args:
+            args["scope"] = "page"
         elif "scope" not in args:
             args["scope"] = "all"
 
@@ -122,6 +312,14 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
                 extracted = reference_match.group(1).strip()
                 if extracted:
                     args["reference_text"] = extracted
+
+        if "target_text" not in args and isinstance(command, str):
+            if re.search(
+                r"\b((first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+paragraph|paragraph\s+(first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?|one|two|three|four|five|six|seven|eight|nine|ten))\b",
+                command,
+                flags=re.IGNORECASE,
+            ):
+                args["target_text"] = "__paragraph_target__"
 
     if tool_name == "add_text":
         auto_coordinates = False

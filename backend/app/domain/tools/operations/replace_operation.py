@@ -17,19 +17,98 @@ def replace_text_with_reflow(
     paragraph_gap_override: float | None = None,
     preferred_page_number: int | None = None,
     restrict_page_number: int | None = None,
+    paragraph_index: int | None = None,
+    occurrence_index: int | None = None,
 ) -> int:
+    def _paragraph_index_for_rect(target_page: fitz.Page, rect: fitz.Rect) -> int | None:
+        text_dict = target_page.get_text("dict")
+        paragraph_counter = 0
+        for blk in sorted(text_dict.get("blocks", []), key=lambda item: item.get("bbox", [0, 0, 0, 0])[1]):
+            if blk.get("type") != 0:
+                continue
+            lines = blk.get("lines", [])
+            if not lines:
+                continue
+            block_text = "".join(
+                "".join(str(span.get("text", "")) for span in line.get("spans", []))
+                for line in lines
+            ).strip()
+            if not block_text:
+                continue
+            paragraph_counter += 1
+            bbox = blk.get("bbox")
+            if not bbox:
+                continue
+            if fitz.Rect(bbox).intersects(rect):
+                return paragraph_counter
+        return None
+
     deletion_mode = not new_text.strip()
 
     anchor = executor._locate_semantic_anchor(pdf_doc, old_text, preferred_page_number=preferred_page_number)
-    if not anchor:
-        return 0
-    if restrict_page_number is not None and anchor["page"].number + 1 != restrict_page_number:
+    page = anchor["page"] if anchor else None
+    target_rects: list[fitz.Rect] | None = None
+
+    if occurrence_index is not None and occurrence_index > 0:
+        if restrict_page_number is not None:
+            page_idx = restrict_page_number - 1
+            if page_idx < 0 or page_idx >= len(pdf_doc):
+                return 0
+            page = pdf_doc[page_idx]
+            exact_matches = executor._find_all_matches_on_page(page, old_text)
+            filtered_matches = exact_matches
+            if paragraph_index is not None:
+                filtered_matches = [
+                    match
+                    for match in exact_matches
+                    if _paragraph_index_for_rect(page, union_rects(match)) == paragraph_index
+                ]
+            if occurrence_index > len(filtered_matches):
+                return 0
+            target_rects = filtered_matches[occurrence_index - 1]
+        else:
+            seen = 0
+            for candidate_page in pdf_doc:
+                exact_matches = executor._find_all_matches_on_page(candidate_page, old_text)
+                filtered_matches = exact_matches
+                if paragraph_index is not None:
+                    filtered_matches = [
+                        match
+                        for match in exact_matches
+                        if _paragraph_index_for_rect(candidate_page, union_rects(match)) == paragraph_index
+                    ]
+                for match in filtered_matches:
+                    seen += 1
+                    if seen == occurrence_index:
+                        page = candidate_page
+                        target_rects = match
+                        break
+                if target_rects is not None:
+                    break
+            if target_rects is None:
+                return 0
+    else:
+        if not anchor:
+            return 0
+        if restrict_page_number is not None and anchor["page"].number + 1 != restrict_page_number:
+            return 0
+        page = anchor["page"]
+        exact_matches = executor._find_all_matches_on_page(page, old_text)
+        if paragraph_index is not None:
+            exact_matches = [
+                match
+                for match in exact_matches
+                if _paragraph_index_for_rect(page, union_rects(match)) == paragraph_index
+            ]
+            if not exact_matches:
+                return 0
+            target_rects = exact_matches[0]
+        else:
+            target_rects = select_exact_match_rects(exact_matches, anchor["rects"])
+
+    if page is None or not target_rects:
         return 0
 
-    page = anchor["page"]
-
-    exact_matches = executor._find_all_matches_on_page(page, old_text)
-    target_rects = select_exact_match_rects(exact_matches, anchor["rects"])
     full_match_rect = union_rects(target_rects)
 
     start_line_info = executor._find_line_for_rect(page, target_rects[0])
@@ -38,13 +117,25 @@ def replace_text_with_reflow(
         start_line_rect, start_baseline_y = start_line_info
     else:
         start_line_rect = fitz.Rect(full_match_rect)
-        start_baseline_y = anchor["baseline_y"]
+        start_baseline_y = (target_rects[0].y1 - 1.0)
     if end_line_info:
         end_line_rect, _ = end_line_info
     else:
         end_line_rect = fitz.Rect(full_match_rect)
 
-    block_rect = anchor.get("block_rect") or fitz.Rect(start_line_rect.x0, start_line_rect.y0, end_line_rect.x1, end_line_rect.y1)
+    first_line_x, block_x, inferred_block_rect = executor._get_block_geometry(page, full_match_rect)
+    block_rect = inferred_block_rect or fitz.Rect(start_line_rect.x0, start_line_rect.y0, end_line_rect.x1, end_line_rect.y1)
+
+    text_dict = page.get_text("dict", clip=full_match_rect)
+    block_spans = [
+        span
+        for blk in text_dict.get("blocks", [])
+        for line in blk.get("lines", [])
+        for span in line.get("spans", [])
+    ]
+    anchor_fontsize = float(block_spans[0].get("size", 11.0)) if block_spans else 11.0
+    anchor_fontname = executor._map_span_font_to_base14(str(block_spans[0].get("font", "helv"))) if block_spans else "helv"
+    anchor_color = executor._color_tuple_from_int(block_spans[0].get("color", 0)) if block_spans else (0, 0, 0)
 
     same_line_tail_tokens: list[tuple[float, str]] = []
     words = page.get_text("words")
@@ -106,7 +197,7 @@ def replace_text_with_reflow(
             page.add_redact_annot(fitz.Rect(rx0, lrect.y0, rx1, lrect.y1), fill=(1, 1, 1))
     page.apply_redactions()
 
-    base_lh_detected, base_pg_detected = executor._infer_vertical_rhythm(page, anchor["fontsize"])
+    base_lh_detected, base_pg_detected = executor._infer_vertical_rhythm(page, anchor_fontsize)
     target_lh = executor._line_height(fontsize)
     edited_lh = max(line_height_override or base_lh_detected, target_lh)
     base_lh = base_lh_detected
@@ -137,6 +228,11 @@ def replace_text_with_reflow(
         margin = 36.0
         anchor_y = max(margin + base_lh, start_baseline_y - float(pg))
 
+    replacement_text = new_text
+    inline_gap_x = 0.0
+    if inline_tail and replacement_text and not replacement_text.endswith((" ", "\n")) and inline_tail[0].isalnum():
+        inline_gap_x = fitz.get_text_length(" ", fontname=anchor_fontname, fontsize=anchor_fontsize)
+
     start_pt = fitz.Point(target_rects[0].x0, anchor_y)
     if deletion_mode:
         class _DeletionAnchor:
@@ -150,7 +246,7 @@ def replace_text_with_reflow(
             pdf_doc=pdf_doc,
             start_page=page,
             start_point=start_pt,
-            text=new_text,
+            text=replacement_text,
             fontsize=fontsize,
             fontname=fontname,
             color=color,
@@ -163,14 +259,14 @@ def replace_text_with_reflow(
         res = executor._insert_wrapped_text(
             pdf_doc=pdf_doc,
             start_page=res.final_page,
-            start_point=fitz.Point(res.final_point.x, res.final_point.y),
+            start_point=fitz.Point(res.final_point.x + inline_gap_x, res.final_point.y),
             text=inline_tail,
-            fontsize=anchor["fontsize"],
-            fontname=anchor["fontname"],
-            color=anchor["color"],
+            fontsize=anchor_fontsize,
+            fontname=anchor_fontname,
+            color=anchor_color,
             respect_start_y=True,
             line_height_override=base_lh,
-            continuation_x=anchor["block_x"],
+            continuation_x=block_x,
         )
 
     executor._reflow_remaining_blocks(pdf_doc, res, captured_blocks, base_lh, pg)

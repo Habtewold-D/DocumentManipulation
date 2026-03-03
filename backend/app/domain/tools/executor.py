@@ -163,6 +163,8 @@ class ToolExecutor:
         paragraph_gap_override: float | None = None,
         preferred_page_number: int | None = None,
         restrict_page_number: int | None = None,
+        paragraph_index: int | None = None,
+        occurrence_index: int | None = None,
     ) -> int:
         return replace_text_with_reflow(
             self,
@@ -176,6 +178,8 @@ class ToolExecutor:
             paragraph_gap_override=paragraph_gap_override,
             preferred_page_number=preferred_page_number,
             restrict_page_number=restrict_page_number,
+            paragraph_index=paragraph_index,
+            occurrence_index=occurrence_index,
         )
 
     @staticmethod
@@ -591,14 +595,16 @@ class ToolExecutor:
             scope = str(args.get("scope", "all")).lower()
             page_number_raw = args.get("page_number")
             page_number = int(page_number_raw) if page_number_raw is not None else None
+            paragraph_index_raw = args.get("paragraph_index")
+            paragraph_index = int(paragraph_index_raw) if isinstance(paragraph_index_raw, int | float) and int(paragraph_index_raw) > 0 else None
+            occurrence_raw = args.get("occurrence")
+            occurrence = int(occurrence_raw) if isinstance(occurrence_raw, int | float) and int(occurrence_raw) > 0 else None
 
             if not old_text or (tool_name != "remove_text" and old_text == new_text):
                 changed = 0
             else:
-                changed = 0
-                max_replacements = 200
-                for _ in range(max_replacements):
-                    replaced = self._replace_text(
+                if occurrence is not None:
+                    changed = self._replace_text(
                         pdf_doc,
                         old_text=old_text,
                         new_text=new_text,
@@ -607,10 +613,27 @@ class ToolExecutor:
                         color=color,
                         preferred_page_number=page_number if scope == "page" else None,
                         restrict_page_number=page_number if scope == "page" else None,
+                        paragraph_index=paragraph_index,
+                        occurrence_index=occurrence,
                     )
-                    if replaced <= 0:
-                        break
-                    changed += replaced
+                else:
+                    changed = 0
+                    max_replacements = 200
+                    for _ in range(max_replacements):
+                        replaced = self._replace_text(
+                            pdf_doc,
+                            old_text=old_text,
+                            new_text=new_text,
+                            fontsize=fontsize,
+                            fontname=fontname,
+                            color=color,
+                            preferred_page_number=page_number if scope == "page" else None,
+                            restrict_page_number=page_number if scope == "page" else None,
+                            paragraph_index=paragraph_index,
+                        )
+                        if replaced <= 0:
+                            break
+                        changed += replaced
         elif tool_name == "add_text":
             try:
                 changed = apply_add_text(self, pdf_doc, args)

@@ -21,7 +21,7 @@ def reflow_remaining_blocks(
         elif block.get("same_paragraph"):
             spacing = block_lh
         elif original_gap > 0:
-            spacing = max(original_gap, block_lh)
+            spacing = max(original_gap, block_lh, active_pg)
         else:
             spacing = active_pg
 

@@ -266,3 +266,199 @@ def test_validate_plan_normalizes_invalid_extract_scope() -> None:
     args = result["plan"][0]["args"]
     assert args["scope"] == "all"
     assert args["document_id"] == "doc-1"
+
+
+def test_validate_plan_parses_page_and_occurrence_from_command() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "on first page remove the second occurrence of Habtewold Degfie",
+        "plan": [
+            {
+                "tool": "remove_text",
+                "args": {"old_text": "Habtewold Degfie"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["occurrence"] == 2
+
+
+def test_validate_plan_parses_paragraph_ordinal_as_paragraph_index() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "from the first page replace text in the first paragraph",
+        "plan": [
+            {
+                "tool": "replace_text",
+                "args": {"old_text": "A", "new_text": "B"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["paragraph_index"] == 1
+
+
+def test_validate_plan_parses_paragraph_word_order_paragraph_three() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "change the font size of paragraph three of the first page to 15",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {"font_size": 15},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["paragraph_index"] == 3
+    assert args["target_text"] == "__paragraph_target__"
+
+
+def test_validate_plan_parses_reversed_occurrence_wording() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "change the font size of occurrence first of the word that from the second page to 15",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {"target_text": "that", "font_size": 15},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "page"
+    assert args["page_number"] == 2
+    assert args["occurrence"] == 1
+
+
+def test_validate_plan_parses_page_target_for_change_font_color() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "on second page change the color of My name is Habtewold Degfie to red",
+        "plan": [
+            {
+                "tool": "change_font_color",
+                "args": {"target_text": "My name is Habtewold Degfie", "color": "red"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "page"
+    assert args["page_number"] == 2
+
+
+def test_validate_plan_allows_font_size_first_paragraph_without_explicit_target_text() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "change the font size of the first paragraph of the first page to 14",
+        "plan": [
+            {
+                "tool": "change_font_size",
+                "args": {},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["target_text"] == "__paragraph_target__"
+    assert args["font_size"] == 14
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["paragraph_index"] == 1
+
+
+def test_validate_plan_parses_combined_page_paragraph_occurrence() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "from first page second paragraph third occurrence change color of Habtewold to red",
+        "plan": [
+            {
+                "tool": "change_font_color",
+                "args": {"target_text": "Habtewold", "color": "red"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["paragraph_index"] == 2
+    assert args["occurrence"] == 3
+
+
+def test_validate_plan_extracts_target_text_from_occurrence_phrase_for_highlight() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "from page one second paragraph highlight the second occurrence of I",
+        "plan": [
+            {
+                "tool": "highlight_text",
+                "args": {"scope": "from page one second paragraph"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["target_text"] == "I"
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["paragraph_index"] == 2
+    assert args["occurrence"] == 2
+
+
+def test_validate_plan_extracts_target_text_for_change_font_color_from_occurrence_phrase() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "from page one second paragraph change the color of the second occurrence of I to red",
+        "plan": [
+            {
+                "tool": "change_font_color",
+                "args": {"color": "red", "scope": "from page one second paragraph"},
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["target_text"] == "I"
+    assert args["scope"] == "page"
+    assert args["page_number"] == 1
+    assert args["paragraph_index"] == 2
+    assert args["occurrence"] == 2

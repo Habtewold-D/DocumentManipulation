@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -9,6 +11,15 @@ from app.orchestration.schemas import CommandRequest, CommandResponse, CommandRu
 from app.orchestration.service import OrchestrationService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _enqueue_or_fallback_inline(run_id: str) -> None:
+    try:
+        enqueue_run_processing(run_id)
+    except Exception as error:
+        logger.warning("Queue enqueue failed for run_id=%s, falling back to inline processing: %s", run_id, error)
+        OrchestrationService.process_queued_run(run_id)
 
 
 @router.post("/documents/{document_id}/commands", response_model=CommandResponse)
@@ -21,7 +32,7 @@ def run_command(
     service = OrchestrationService(CommandRunRepository(db))
     try:
         response = service.enqueue_command(document_id, payload.command, idempotency_key=idempotency_key)
-        enqueue_run_processing(response.run_id)
+        _enqueue_or_fallback_inline(response.run_id)
         return response
     except RuntimeError as error:
         return JSONResponse(
@@ -73,7 +84,7 @@ def retry_run(run_id: str, db: Session = Depends(get_db)) -> CommandRunItem:
     service = OrchestrationService(CommandRunRepository(db))
     try:
         run = service.retry_run(run_id)
-        enqueue_run_processing(run.run_id)
+        _enqueue_or_fallback_inline(run.run_id)
         return run
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
