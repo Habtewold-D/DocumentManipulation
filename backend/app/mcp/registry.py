@@ -165,6 +165,47 @@ TOOL_REGISTRY: dict[str, ToolSchema] = {
         input_schema={"document_id": "string", "scope": "page|all", "page_number": "number?"},
         output_schema={"success": "boolean", "text": "string", "version_id": "string?"},
     ),
+    "add_page": ToolSchema(
+        name="add_page",
+        input_schema={
+            "document_id": "string",
+            "position": "before|after",
+            "page_number": "string",
+            "source_page": "string?",
+        },
+        output_schema={
+            "success": "boolean",
+            "pages_modified": "number",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
+    "delete_page": ToolSchema(
+        name="delete_page",
+        input_schema={
+            "document_id": "string",
+            "page_number": "string",
+        },
+        output_schema={
+            "success": "boolean",
+            "pages_modified": "number",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
+    "reorder_pages": ToolSchema(
+        name="reorder_pages",
+        input_schema={
+            "document_id": "string",
+            "page_order": "string[]",
+        },
+        output_schema={
+            "success": "boolean",
+            "pages_modified": "number",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
 }
 
 

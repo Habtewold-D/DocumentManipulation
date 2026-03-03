@@ -410,3 +410,151 @@ def test_change_font_size_third_paragraph_preserves_gap_to_next_paragraph() -> N
     after_gap = fourth_para_head_after[0].y0 - third_para_tail_after[-1].y1
     assert after_gap > 4.0
     assert after_gap >= before_gap * 0.4
+
+
+def test_add_page_before_first():
+    doc = _build_three_line_document()
+    original_len = len(doc)
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+    executor._save_new_version = lambda document_id, pdf_doc: {"asset_id": "test", "url": "test"}
+    executor._build_preview_manifest = lambda pdf_doc: {"pages": []}
+
+    result = executor._execute_internal("add_page", {
+        "document_id": "test",
+        "position": "before",
+        "page_number": "1",
+        "source_page": None
+    })
+
+    assert result["success"] == True
+    assert len(doc) == original_len + 1
+    assert result["output"]["changes"] == 1
+
+
+def test_add_page_after_last():
+    doc = _build_three_line_document()
+    original_len = len(doc)
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+    executor._save_new_version = lambda document_id, pdf_doc: {"asset_id": "test", "url": "test"}
+    executor._build_preview_manifest = lambda pdf_doc: {"pages": []}
+
+    result = executor._execute_internal("add_page", {
+        "document_id": "test",
+        "position": "after",
+        "page_number": str(original_len),
+        "source_page": None
+    })
+
+    assert result["success"] == True
+    assert len(doc) == original_len + 1
+    assert result["output"]["changes"] == 1
+
+
+def test_add_page_with_source():
+    doc = _build_three_line_document()
+    original_len = len(doc)
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+    executor._save_new_version = lambda document_id, pdf_doc: {"asset_id": "test", "url": "test"}
+    executor._build_preview_manifest = lambda pdf_doc: {"pages": []}
+
+    result = executor._execute_internal("add_page", {
+        "document_id": "test",
+        "position": "after",
+        "page_number": "1",
+        "source_page": "1"
+    })
+
+    assert result["success"] == True
+    assert len(doc) == original_len + 1
+    assert result["output"]["changes"] == 1
+
+
+def test_add_page_invalid_position():
+    doc = _build_three_line_document()
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+
+    result = executor._execute_internal("add_page", {
+        "document_id": "test",
+        "position": "invalid",
+        "page_number": "1"
+    })
+
+    assert result["success"] == False
+    assert "Invalid position" in result["error"]
+
+
+def test_delete_page():
+    doc = _build_three_line_document()
+    # Add a second page for testing
+    doc.new_page()
+    original_len = len(doc)
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+    executor._save_new_version = lambda document_id, pdf_doc: {"asset_id": "test", "url": "test"}
+    executor._build_preview_manifest = lambda pdf_doc: {"pages": []}
+
+    result = executor._execute_internal("delete_page", {
+        "document_id": "test",
+        "page_number": "2"
+    })
+
+    assert result["success"] == True
+    assert len(doc) == original_len - 1
+    assert result["output"]["changes"] == 1
+
+
+def test_delete_page_invalid():
+    doc = _build_three_line_document()
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+
+    result = executor._execute_internal("delete_page", {
+        "document_id": "test",
+        "page_number": "2"  # only 1 page
+    })
+
+    assert result["success"] == False
+    assert "Invalid page_number" in result["error"]
+
+
+def test_reorder_pages():
+    doc = fitz.open()
+    for i in range(3):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"Page {i+1}")
+    original_len = len(doc)
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+    executor._save_new_version = lambda document_id, pdf_doc: {"asset_id": "test", "url": "test"}
+    executor._build_preview_manifest = lambda pdf_doc: {"pages": []}
+
+    result = executor._execute_internal("reorder_pages", {
+        "document_id": "test",
+        "page_order": ["3", "1", "2"]
+    })
+
+    assert result["success"] == True
+    assert len(doc) == original_len
+    assert result["output"]["changes"] == original_len
+    # Check content reordered
+    assert "Page 3" in doc[0].get_text()
+    assert "Page 1" in doc[1].get_text()
+    assert "Page 2" in doc[2].get_text()
+
+
+def test_reorder_pages_invalid():
+    doc = _build_three_line_document()
+    executor = _TestToolExecutor()
+    executor._load_doc = lambda asset_id: doc
+
+    result = executor._execute_internal("reorder_pages", {
+        "document_id": "test",
+        "page_order": ["1", "2"]  # wrong length
+    })
+
+    assert result["success"] == False
+    assert "Invalid page_order" in result["error"]

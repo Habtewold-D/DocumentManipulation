@@ -1,14 +1,56 @@
 from app.orchestration.providers.groq_client import GroqClient
 
-
 class ToolPlanner:
     def __init__(self) -> None:
         self.client = GroqClient()
 
     def create_plan(self, command: str) -> dict:
-        plan = self.client.plan(command)
         command_lower = command.lower()
         import re
+
+        # Page operation fallbacks
+        add_page_match = re.search(r'\b(add|insert)\s+(?:a\s+)?(?:blank\s+|new\s+|black\s+)?page\s+(before|after)\s+(?:page\s+)?(\d+)', command, re.IGNORECASE)
+        if add_page_match:
+            position = add_page_match.group(2).lower()
+            page_number = str(add_page_match.group(3))
+            return {
+                "status": "fallback",
+                "plan": [{"tool": "add_page", "args": {"position": position, "page_number": page_number}}],
+            }
+
+        delete_page_match = re.search(r'\b(?:delete|remove)\s+page\s+(\d+)', command, re.IGNORECASE)
+        if delete_page_match:
+            page_number = str(delete_page_match.group(1))
+            return {
+                "status": "fallback",
+                "plan": [
+                    {
+                        "tool": "delete_page",
+                        "args": {
+                            "page_number": page_number,
+                        },
+                    }
+                ],
+            }
+
+        reorder_match = re.search(r'reorder pages to ([\d,\s]+)', command, re.IGNORECASE)
+        if reorder_match:
+            order_str = reorder_match.group(1)
+            page_order = [str(p.strip()) for p in order_str.split(',') if p.strip().isdigit()]
+            if page_order:
+                return {
+                    "status": "fallback",
+                    "plan": [
+                        {
+                            "tool": "reorder_pages",
+                            "args": {
+                                "page_order": page_order,
+                            },
+                        }
+                    ],
+                }
+
+        plan = self.client.plan(command)
 
         remove_prefix_match = re.match(r"^\s*(?:remove|delete)\s+(?:the\s+)?(?:text\s+)?(.+)$", command, flags=re.IGNORECASE | re.DOTALL)
         if remove_prefix_match:

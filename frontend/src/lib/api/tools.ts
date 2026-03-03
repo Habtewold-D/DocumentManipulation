@@ -17,6 +17,9 @@ const SUPPORTED_TOOLS = new Set([
   "underline_text",
   "strikethrough_text",
   "extract_text",
+  "add_page",
+  "delete_page",
+  "reorder_pages",
 ]);
 
 export async function listTools() {

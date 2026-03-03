@@ -18,7 +18,7 @@ from app.domain.tools.engines import (
     insert_paragraph_below_anchor,
     resolve_non_overlapping_y,
 )
-from app.domain.tools.operations import apply_add_text, apply_annotations, apply_text_style_change, replace_text_with_reflow
+from app.domain.tools.operations import apply_add_text, apply_annotations, apply_text_style_change, apply_page_operations, replace_text_with_reflow
 
 
 class ToolExecutionResult(dict):
@@ -651,6 +651,19 @@ class ToolExecutor:
             changed = apply_text_style_change(self, pdf_doc, tool_name, args)
         elif tool_name in {"highlight_text", "underline_text", "strikethrough_text"}:
             changed = apply_annotations(self, pdf_doc, tool_name, args)
+        elif tool_name in {"add_page", "delete_page", "reorder_pages"}:
+            try:
+                changed = apply_page_operations(self, pdf_doc, tool_name, args)
+            except ValueError as error:
+                return ToolExecutionResult(
+                    {
+                        "tool": tool_name,
+                        "status": "failed",
+                        "success": False,
+                        "output": {},
+                        "error": str(error),
+                    }
+                )
         else:
             return ToolExecutionResult(
                 {
