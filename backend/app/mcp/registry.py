@@ -206,6 +206,55 @@ TOOL_REGISTRY: dict[str, ToolSchema] = {
             "message": "string?",
         },
     ),
+    "insert_image": ToolSchema(
+        name="insert_image",
+        input_schema={
+            "document_id": "string",
+            "page_number": "string",
+            "image_url": "string",
+            "x": "number",
+            "y": "number",
+            "width": "number",
+            "height": "number",
+        },
+        output_schema={
+            "success": "boolean",
+            "changes": "number",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
+    "resize_image": ToolSchema(
+        name="resize_image",
+        input_schema={
+            "document_id": "string",
+            "page_number": "string",
+            "image_index": "string",
+            "new_width": "number",
+            "new_height": "number",
+        },
+        output_schema={
+            "success": "boolean",
+            "changes": "number",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
+    "rotate_image": ToolSchema(
+        name="rotate_image",
+        input_schema={
+            "document_id": "string",
+            "page_number": "string",
+            "image_index": "string",
+            "angle": "number",
+        },
+        output_schema={
+            "success": "boolean",
+            "changes": "number",
+            "version_id": "string",
+            "message": "string?",
+        },
+    ),
 }
 
 

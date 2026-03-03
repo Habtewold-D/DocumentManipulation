@@ -11,6 +11,7 @@ from app.orchestration.nodes.validate_plan import validate_plan
 class CommandState(TypedDict, total=False):
     document_id: str
     command: str
+    imageUrl: str | None
     plan: list[dict[str, Any]]
     status: str
     error: str
@@ -37,10 +38,11 @@ class CommandGraph:
 
         self._graph = workflow.compile()
 
-    def run(self, document_id: str, command: str, source_asset_id: str | None = None) -> dict:
+    def run(self, document_id: str, command: str, image_url: str | None = None, source_asset_id: str | None = None) -> dict:
         initial_state: CommandState = {
             "document_id": document_id,
             "command": command,
+            "imageUrl": image_url,
             "plan": [],
             "status": "pending",
         }

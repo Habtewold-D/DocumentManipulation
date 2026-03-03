@@ -31,7 +31,7 @@ def run_command(
 ):
     service = OrchestrationService(CommandRunRepository(db))
     try:
-        response = service.enqueue_command(document_id, payload.command, idempotency_key=idempotency_key)
+        response = service.enqueue_command(document_id, payload.command, image_url=payload.imageUrl, idempotency_key=idempotency_key)
         _enqueue_or_fallback_inline(response.run_id)
         return response
     except RuntimeError as error:

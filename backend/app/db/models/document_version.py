@@ -18,6 +18,7 @@ class DocumentVersion(Base):
     state: Mapped[str] = mapped_column(String(20), index=True)
     version_number: Mapped[int] = mapped_column(Integer)
     pdf_asset_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     preview_manifest: Mapped[str | None] = mapped_column(Text, nullable=True)
     operation_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

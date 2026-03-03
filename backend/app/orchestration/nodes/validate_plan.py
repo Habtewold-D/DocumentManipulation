@@ -383,6 +383,39 @@ def _normalize_step_args(step: dict, document_id: str | None, command: str | Non
         if auto_coordinates:
             args["_auto_coordinates"] = True
 
+    if tool_name == "insert_image":
+        position = str(args.get("position", "top") or "top").strip().lower()
+        if position not in {"top", "bottom", "above", "below", "before", "after"}:
+            position = "top"
+        args["position"] = position
+
+        if "page_number" not in args and isinstance(command, str):
+            command_page = _parse_page_number_from_command(command)
+            if command_page is not None:
+                args["page_number"] = str(command_page)
+
+        page_value = args.get("page_number", "1")
+        if isinstance(page_value, (int, float)):
+            args["page_number"] = str(max(1, int(page_value)))
+        elif isinstance(page_value, str):
+            parsed = _parse_number(page_value)
+            if isinstance(parsed, (int, float)) and int(parsed) > 0:
+                args["page_number"] = str(int(parsed))
+            else:
+                args["page_number"] = "1"
+        else:
+            args["page_number"] = "1"
+
+        # Keep MCP-required geometry fields present; image operation uses these as placement bounds.
+        if "x" not in args:
+            args["x"] = 24
+        if "y" not in args:
+            args["y"] = 24 if position in {"top", "above", "below", "before", "after"} else 620
+        if "width" not in args:
+            args["width"] = 547
+        if "height" not in args:
+            args["height"] = 220
+
 
 def validate_plan(state: dict) -> dict:
     plan = state.get("plan")

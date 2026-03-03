@@ -462,3 +462,31 @@ def test_validate_plan_extracts_target_text_for_change_font_color_from_occurrenc
     assert args["page_number"] == 1
     assert args["paragraph_index"] == 2
     assert args["occurrence"] == 2
+
+
+def test_validate_plan_fills_insert_image_geometry_defaults() -> None:
+    state = {
+        "document_id": "doc-1",
+        "command": "insert this image at the top of the second page",
+        "plan": [
+            {
+                "tool": "insert_image",
+                "args": {
+                    "image_url": "https://example.com/test.jpg",
+                    "page_number": "2",
+                    "position": "top",
+                },
+            }
+        ],
+    }
+
+    result = validate_plan(state)
+
+    assert result["status"] == "validated"
+    args = result["plan"][0]["args"]
+    assert args["page_number"] == "2"
+    assert args["position"] == "top"
+    assert args["x"] == 24
+    assert args["y"] == 24
+    assert args["width"] == 547
+    assert args["height"] == 220

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class CommandRequest(BaseModel):
     command: str
+    imageUrl: str | None = None
 
 
 class CommandResponse(BaseModel):

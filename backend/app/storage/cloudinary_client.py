@@ -42,6 +42,25 @@ class CloudinaryClient:
     def upload_version_pdf(self, file_bytes: bytes, public_id: str, folder: str = "pdf-agent/versions") -> dict[str, Any]:
         return self.upload_pdf(file_bytes=file_bytes, public_id=public_id, folder=folder)
 
+    def upload_image(self, file_bytes: bytes, public_id: str, folder: str = "pdf-agent/images") -> dict[str, Any]:
+        response = cloudinary.uploader.upload(
+            file_bytes,
+            resource_type="image",
+            public_id=public_id,
+            folder=folder,
+            overwrite=False,
+            invalidate=False,
+            use_filename=False,
+        )
+        return {
+            "asset_id": response.get("public_id"),
+            "version": response.get("version"),
+            "secure_url": response.get("secure_url"),
+            "bytes": response.get("bytes"),
+            "format": response.get("format"),
+            "resource_type": response.get("resource_type"),
+        }
+
     def build_download_url(self, asset_id: str, version: str | int | None = None) -> str:
         public_id = asset_id
         options: dict[str, Any] = {"resource_type": "raw", "secure": True}

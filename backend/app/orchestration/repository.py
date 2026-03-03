@@ -17,6 +17,21 @@ class CommandRunRepository:
         self.db.flush()
         return run
 
+    def create(
+        self,
+        document_id: str,
+        command_text: str,
+        image_url: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CommandRun:
+        run = CommandRun(
+            document_id=document_id,
+            command_text=command_text,
+            image_url=image_url,
+            idempotency_key=idempotency_key,
+        )
+        return run
+
     def get_by_idempotency_key(self, document_id: str, idempotency_key: str) -> CommandRun | None:
         stmt = select(CommandRun).where(
             CommandRun.document_id == document_id,

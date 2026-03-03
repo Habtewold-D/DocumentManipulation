@@ -15,6 +15,7 @@ class CommandRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), index=True)
     command_text: Mapped[str] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
     planned_tools: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

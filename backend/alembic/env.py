@@ -19,6 +19,9 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
+    if url is None:
+        url = os.getenv("DATABASE_URL")
+    print("env.py executed, URL:", url)
     context.configure(
         url=url,
         target_metadata=target_metadata,

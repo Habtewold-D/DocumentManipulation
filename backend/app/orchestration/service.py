@@ -9,15 +9,22 @@ from app.config.settings import settings
 from app.domain.documents.repository import DocumentRepository
 from app.domain.logs.repository import ToolLogRepository
 from app.domain.versions.repository import VersionRepository
+from app.domain.versions.service import VersionService
 from app.orchestration.graph import CommandGraph
 from app.orchestration.planners.tool_planner import ToolPlanner
 from app.orchestration.repository import CommandRunRepository
 from app.orchestration.schemas import CommandResponse, CommandRunItem
+from app.storage.cloudinary_client import CloudinaryClient
 
 
 class OrchestrationService:
     def __init__(self, repository: CommandRunRepository, planner: ToolPlanner | None = None) -> None:
         self.repository = repository
+        self.version_service = VersionService(
+            repository=VersionRepository(self.repository.db),
+            document_repository=DocumentRepository(self.repository.db),
+            cloudinary_client=CloudinaryClient()
+        )
         self.planner = planner or ToolPlanner()
         self.graph = CommandGraph()
 
@@ -81,7 +88,7 @@ class OrchestrationService:
             return "shadow"
         return "v1"
 
-    def enqueue_command(self, document_id: str, command: str, idempotency_key: str | None = None) -> CommandResponse:
+    def enqueue_command(self, document_id: str, command: str, image_url: str | None = None, idempotency_key: str | None = None) -> CommandResponse:
         db = self.repository.db
 
         if idempotency_key:
@@ -93,14 +100,15 @@ class OrchestrationService:
         if not document:
             raise ValueError("Document not found")
 
-        run = CommandRun(
+        run = self.repository.create(
             document_id=document_id,
             command_text=command,
+            image_url=image_url,
             idempotency_key=idempotency_key,
-            planned_tools=json.dumps({"execution_mode": self._normalized_mode()}),
-            draft_version_id=None,
-            status="queued",
         )
+        run.planned_tools = json.dumps({"execution_mode": self._normalized_mode()})
+        run.draft_version_id = None
+        run.status = "queued"
         saved_run = self.repository.save(run)
         db.commit()
         return self._to_command_response(saved_run)
@@ -139,7 +147,7 @@ class OrchestrationService:
         self.repository.db.commit()
         return self._to_command_run_item(run)
 
-    def _execute_v1(self, document_id: str, command: str) -> dict[str, object]:
+    def _execute_v1(self, document_id: str, command: str, run: CommandRun | None = None) -> dict[str, object]:
         db = self.repository.db
 
         document_repository = DocumentRepository(db)
@@ -150,13 +158,15 @@ class OrchestrationService:
         if not document:
             raise ValueError("Document not found")
 
+        image_url = run.image_url if run else None
+
         source_asset_id = document.original_asset_id
         if document.current_version_id:
             current_version = version_repository.get_for_document(document_id, document.current_version_id)
             if current_version and current_version.pdf_asset_id:
                 source_asset_id = current_version.pdf_asset_id
 
-        state = self.graph.run(document_id, command, source_asset_id=source_asset_id)
+        state = self.graph.run(document_id, command, image_url=image_url, source_asset_id=source_asset_id)
         plan = state.get("plan", [])
         executed_tools = state.get("executed_tools", [])
         status = state.get("status", "draft_ready")
@@ -184,6 +194,7 @@ class OrchestrationService:
             state="draft",
             version_number=version_repository.next_version_number(document_id),
             pdf_asset_id=result_asset_id,
+            image_url=image_url,
             preview_manifest=json.dumps(preview_manifest) if preview_manifest else None,
             operation_log=json.dumps({"plan": plan, "executed_tools": executed_tools}),
         )
@@ -221,7 +232,7 @@ class OrchestrationService:
     def _execute_with_mode(self, run: CommandRun) -> dict[str, object]:
         execution_mode = self._resolve_execution_mode(run)
         if execution_mode in {"v2", "shadow"}:
-            authoritative = self._execute_v1(run.document_id, run.command_text)
+            authoritative = self._execute_v1(run.document_id, run.command_text, run)
             details = authoritative.get("details") if isinstance(authoritative.get("details"), dict) else {}
             details = dict(details)
             details["execution_mode"] = execution_mode
@@ -236,7 +247,7 @@ class OrchestrationService:
                 "details": details,
             }
 
-        authoritative = self._execute_v1(run.document_id, run.command_text)
+        authoritative = self._execute_v1(run.document_id, run.command_text, run)
         details = authoritative.get("details") if isinstance(authoritative.get("details"), dict) else {}
         details = dict(details)
         details["execution_mode"] = execution_mode
